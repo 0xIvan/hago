@@ -106,7 +106,7 @@ jobs:
           You can also install the latest release from Terminal:
 
           ```sh
-          curl -fsSL https://raw.githubusercontent.com/0xIvan/WorkLog/main/scripts/install-release.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/0xIvan/hago/main/scripts/install-release.sh | bash
           ```
 
           This release is Developer ID signed and notarized.

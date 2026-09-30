@@ -41,12 +41,12 @@ swift build -c release --product Hago
 
 ## Download And Install
 
-Download the latest `Hago.app.zip` from [GitHub Releases](https://github.com/0xIvan/WorkLog/releases/latest), unzip it, and move `Hago.app` to `/Applications`.
+Download the latest `Hago.app.zip` from [GitHub Releases](https://github.com/0xIvan/hago/releases/latest), unzip it, and move `Hago.app` to `/Applications`.
 
 You can also install the latest release from Terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/0xIvan/WorkLog/main/scripts/install-release.sh | bash
+curl -fsSL https://raw.githubusercontent.com/0xIvan/hago/main/scripts/install-release.sh | bash
 ```
 
 Release notes indicate whether a build is notarized. The release workflow is configured for Developer ID signing and notarization once the required Apple secrets are added. Older ad hoc signed releases may require right-clicking `Hago.app` and choosing `Open` on first launch.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${WORKLOG_REPO:-0xIvan/WorkLog}"
+REPO="${WORKLOG_REPO:-0xIvan/hago}"
 APP_NAME="Hago"
 INSTALL_DIR="${WORKLOG_INSTALL_DIR:-/Applications}"
 ARCHIVE_URL="${WORKLOG_ARCHIVE_URL:-https://github.com/$REPO/releases/latest/download/$APP_NAME.app.zip}"

@@ -16,7 +16,7 @@
 - If a change is documentation-only, tests and reinstall are not required; say that clearly.
 
 ## Git
-- Remote: `git@github.com:0xIvan/WorkLog.git`.
+- Remote: `git@github.com:0xIvan/hago.git`.
 - Main branch: `main`.
 - Commit messages should match the existing concise style, for example `Make report panels fill width`.
 - Do not add co-author tags.
