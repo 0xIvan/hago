@@ -49,7 +49,7 @@ jobs:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
-          KEYCHAIN_PATH="$RUNNER_TEMP/worklog-signing.keychain-db"
+          KEYCHAIN_PATH="$RUNNER_TEMP/hago-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(uuidgen)"
           CERTIFICATE_PATH="$RUNNER_TEMP/developer-id-application.p12"
 
@@ -82,7 +82,7 @@ jobs:
             exit 1
           fi
 
-          echo "WORKLOG_CODE_SIGN_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "HAGO_CODE_SIGN_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
 
       - name: Sign and notarize app
         env:

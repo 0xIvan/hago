@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${WORKLOG_REPO:-0xIvan/hago}"
+REPO="${HAGO_REPO:-0xIvan/hago}"
 APP_NAME="Hago"
-INSTALL_DIR="${WORKLOG_INSTALL_DIR:-/Applications}"
-ARCHIVE_URL="${WORKLOG_ARCHIVE_URL:-https://github.com/$REPO/releases/latest/download/$APP_NAME.app.zip}"
+INSTALL_DIR="${HAGO_INSTALL_DIR:-/Applications}"
+ARCHIVE_URL="${HAGO_ARCHIVE_URL:-https://github.com/$REPO/releases/latest/download/$APP_NAME.app.zip}"
 ARCHIVE_PATH="$APP_NAME.app.zip"
 TARGET_APP="$INSTALL_DIR/$APP_NAME.app"
-LEGACY_APP="$INSTALL_DIR/Worklog.app"
 TEMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -16,12 +15,12 @@ cleanup() {
 
 install_app() {
   if [[ -w "$INSTALL_DIR" ]]; then
-    rm -rf "$TARGET_APP" "$LEGACY_APP"
+    rm -rf "$TARGET_APP"
     ditto "$TEMP_DIR/$APP_NAME.app" "$TARGET_APP"
     return
   fi
 
-  sudo rm -rf "$TARGET_APP" "$LEGACY_APP"
+  sudo rm -rf "$TARGET_APP"
   sudo ditto "$TEMP_DIR/$APP_NAME.app" "$TARGET_APP"
 }
 
@@ -37,12 +36,10 @@ if [[ ! -d "$TEMP_DIR/$APP_NAME.app" ]]; then
   exit 1
 fi
 
-for process_name in "$APP_NAME" "Worklog"; do
-  if pgrep -x "$process_name" >/dev/null; then
-    pkill -x "$process_name" || true
-    sleep 1
-  fi
-done
+if pgrep -x "$APP_NAME" >/dev/null; then
+  pkill -x "$APP_NAME" || true
+  sleep 1
+fi
 
 install_app
 open "$TARGET_APP"
