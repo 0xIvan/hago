@@ -3,27 +3,31 @@
 import PackageDescription
 
 let package = Package(
-    name: "Worklog",
+    name: "Hago",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "Hago", targets: ["Worklog"])
+        .executable(name: "Hago", targets: ["Hago"])
     ],
     targets: [
         .target(
-            name: "WorklogCore",
+            name: "HagoCore",
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]
         ),
         .executableTarget(
-            name: "Worklog",
-            dependencies: ["WorklogCore"]
+            name: "Hago",
+            dependencies: ["HagoCore"]
         ),
         .testTarget(
-            name: "WorklogCoreTests",
-            dependencies: ["WorklogCore"]
+            name: "HagoCoreTests",
+            dependencies: ["HagoCore"]
+        ),
+        .testTarget(
+            name: "HagoTests",
+            dependencies: ["Hago"]
         )
     ]
 )
