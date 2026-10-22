@@ -4,13 +4,21 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable semantic version (e.g. 0.2.0)
+        required: true
+      build:
+        description: Monotonically increasing bundle build number
+        required: true
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Build and publish release
+    name: Build notarized release candidate
     runs-on: macos-latest
 
     steps:
@@ -21,7 +29,16 @@ jobs:
         run: swift test
 
       - name: Package app
-        run: scripts/package-app.sh release
+        env:
+          HAGO_VERSION: ${{ inputs.version || github.ref_name }}
+          HAGO_BUILD_NUMBER: ${{ inputs.build }}
+        run: |
+          export HAGO_VERSION="${HAGO_VERSION#v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            SOURCE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)"
+            [[ "$HAGO_VERSION" == "$SOURCE_VERSION" ]] || { echo "Tag must match source bundle version." >&2; exit 1; }
+          fi
+          scripts/package-app.sh release
 
       - name: Validate signing secrets
         env:
@@ -89,41 +106,65 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-        run: scripts/notarize-app.sh outputs/Hago.app outputs/Hago-notarization.zip
+        run: scripts/notarize-app.sh outputs/Hago.app outputs/notarization.zip
 
-      - name: Create release archive
+      - name: Create distribution artifacts
         run: |
-          ditto -c -k --sequesterRsrc --keepParent outputs/Hago.app outputs/Hago.app.zip
-          shasum -a 256 outputs/Hago.app.zip > outputs/Hago.app.zip.sha256
+          scripts/package-dmg.sh outputs/Hago.app outputs
+          DMG="$(find outputs -maxdepth 1 -name 'Hago-*.dmg' -print -quit)"
+          RESULT="$(xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait --output-format json)"
+          STATUS="$(printf '%s' "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
+          [[ "$STATUS" == "Accepted" ]] || { echo "DMG notarization was not accepted: $STATUS" >&2; exit 1; }
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+          (cd outputs && shasum -a 256 Hago-*.dmg Hago-*.zip > SHA256SUMS)
+          cp outputs/SHA256SUMS "${DMG%.dmg}.sha256"
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
 
-      - name: Write release notes
+      - name: Generate and verify signed appcast
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          cat > outputs/release-notes.md <<'EOF'
-          ## Install
-
-          Download `Hago.app.zip`, unzip it, and move `Hago.app` to `/Applications`.
-
-          You can also install the latest release from Terminal:
-
-          ```sh
-          curl -fsSL https://raw.githubusercontent.com/0xIvan/hago/main/scripts/install-release.sh | bash
-          ```
-
-          This release is Developer ID signed and notarized.
-          EOF
+          [[ -n "$SPARKLE_PRIVATE_KEY" ]] || { echo "SPARKLE_PRIVATE_KEY release secret is required." >&2; exit 1; }
+          DMG="$(find outputs -maxdepth 1 -name 'Hago-*.dmg' -print -quit)"
+          scripts/appcast.sh outputs/Hago.app "$DMG"
 
       - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" outputs/Hago.app.zip outputs/Hago.app.zip.sha256 --clobber
+          VERSION="${GITHUB_REF_NAME#v}"
+          cat > outputs/release-notes.md <<EOF
+          Download Hago-$VERSION-*.dmg, open it and drag Hago to Applications.
+          This release is Developer ID signed and notarized.
+          Check for Updates in Hago Settings uses the signed Sparkle appcast.
+          EOF
+          cp outputs/Hago-*.zip outputs/Hago.app.zip
+          (cd outputs && shasum -a 256 Hago.app.zip > Hago.app.zip.sha256)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" outputs/Hago-*.dmg outputs/Hago-*.zip outputs/Hago.app.zip outputs/Hago.app.zip.sha256 outputs/SHA256SUMS outputs/appcast.xml
           else
-            gh release create "$TAG" \
-              outputs/Hago.app.zip \
-              outputs/Hago.app.zip.sha256 \
-              --title "Hago $TAG" \
-              --notes-file outputs/release-notes.md
+            gh release create "$GITHUB_REF_NAME" outputs/Hago-*.dmg outputs/Hago-*.zip outputs/Hago.app.zip outputs/Hago.app.zip.sha256 outputs/SHA256SUMS outputs/appcast.xml --title "Hago $GITHUB_REF_NAME" --notes-file outputs/release-notes.md
           fi
+
+      - name: Upload release candidate for local appcast signing and qualification
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hago-${{ inputs.version }}-${{ inputs.build }}
+          path: |
+            outputs/Hago-*.dmg
+            outputs/Hago-*.zip
+            outputs/SHA256SUMS
+          if-no-files-found: error
+
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/hago-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/developer-id-application.p12"

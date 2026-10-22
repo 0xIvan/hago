@@ -2,7 +2,13 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let appState = AppState()
+    let appState: AppState
+
+    override init() {
+        PreferencesDomainMigration.migrate()
+        appState = AppState()
+        super.init()
+    }
 
     private var statusBarController: StatusBarController?
     private var appearanceObservation: NSKeyValueObservation?

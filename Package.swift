@@ -10,6 +10,7 @@ let package = Package(
     products: [
         .executable(name: "Hago", targets: ["Hago"])
     ],
+    dependencies: [.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0")],
     targets: [
         .target(
             name: "HagoCore",
@@ -19,11 +20,13 @@ let package = Package(
         ),
         .executableTarget(
             name: "Hago",
-            dependencies: ["HagoCore"]
+            dependencies: ["HagoCore", .product(name: "Sparkle", package: "Sparkle")],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
         .testTarget(
             name: "HagoCoreTests",
-            dependencies: ["HagoCore"]
+            dependencies: ["HagoCore", .product(name: "Sparkle", package: "Sparkle")],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
         .testTarget(
             name: "HagoTests",

@@ -43,7 +43,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 openSettings: { [weak self, weak appState] in
                     self?.menu.cancelTracking()
                     DispatchQueue.main.async {
-                        appState?.openSettingsWindow()
+                        appState?.openDashboardWindow()
                     }
                 }
             )

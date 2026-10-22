@@ -4,10 +4,12 @@ import HagoCore
 
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var profileStore: WorkProfileStore
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         NavigationSplitView {
-            List(HagoSection.allCases, selection: $appState.selectedSection) { section in
+            List(HagoSection.dashboardSections, selection: $appState.selectedSection) { section in
                 SidebarSectionLabel(section: section, reviewCount: appState.reviewGroups.count)
                     .tag(section)
             }
@@ -18,7 +20,13 @@ struct DashboardView: View {
                 .navigationTitle(appState.selectedSection.title)
         }
         .background(WindowLifecycleView(id: "dashboard"))
-        .onChange(of: appState.selectedSection) { _, _ in appState.reload() }
+        .sheet(isPresented: $profileStore.needsSetup) {
+            OnboardingView().environmentObject(appState).environmentObject(profileStore)
+        }
+        .onChange(of: appState.selectedSection) { _, section in
+            appState.reload()
+            if HagoSection.settingsSections.contains(section) { openSettings() }
+        }
     }
 
     @ViewBuilder
@@ -30,18 +38,10 @@ struct DashboardView: View {
             ReportsView()
         case .review:
             ReviewTab()
-        case .aiReview:
-            ReviewAISettingsView()
         case .activity:
             RecentActivityTab()
-        case .rules:
-            RulesSettingsView()
-        case .projects:
-            ProjectsSettingsView()
-        case .categories:
-            CategoriesSettingsView()
-        case .privacy:
-            PrivacySettingsView()
+        default:
+            OverviewTab()
         }
     }
 }

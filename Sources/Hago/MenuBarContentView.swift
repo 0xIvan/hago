@@ -14,6 +14,10 @@ struct MenuBarContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            if !appState.accessibilityTrusted {
+                Button("Grant Accessibility Access…") { appState.requestAccessibilityPermission() }
+                    .help("Allow window context recognition. App-level tracking remains available.")
+            }
             metrics
             currentActivity
 
@@ -30,7 +34,7 @@ struct MenuBarContentView: View {
 
             if appState.reviewAISettings.scheduleEnabled,
                appState.reviewAIScheduleState.consecutiveFailures >= 3 {
-                Label("Scheduled Review needs attention. Check AI Harness settings.", systemImage: "exclamationmark.triangle.fill")
+                Label("Scheduled Review needs attention. Check AI Suggestions settings.", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -168,7 +172,7 @@ struct MenuBarContentView: View {
             Button {
                 openSettings()
             } label: {
-                Label("Settings", systemImage: "gearshape")
+                Label("Open Hago", systemImage: "macwindow")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)

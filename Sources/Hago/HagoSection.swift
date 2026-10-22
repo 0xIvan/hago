@@ -1,6 +1,8 @@
 import SwiftUI
 
 enum HagoSection: String, CaseIterable, Identifiable, Hashable {
+    case tracking
+    case profile
     case overview
     case reports
     case review
@@ -11,20 +13,25 @@ enum HagoSection: String, CaseIterable, Identifiable, Hashable {
     case categories
     case privacy
 
+    static let dashboardSections: [Self] = [.overview, .reports, .review, .activity]
+    static let settingsSections: [Self] = [.tracking, .profile, .rules, .projects, .categories, .privacy, .aiReview]
+
     var id: String {
         rawValue
     }
 
     var title: String {
         switch self {
+        case .tracking: "Tracking & Updates"
+        case .profile: "Work Profile"
         case .overview:
             "Overview"
         case .reports:
             "Reports"
         case .review:
-            "Review"
+            "Needs Review"
         case .aiReview:
-            "AI Harness"
+            "AI Suggestions"
         case .activity:
             "Activity"
         case .rules:
@@ -40,6 +47,8 @@ enum HagoSection: String, CaseIterable, Identifiable, Hashable {
 
     var symbolName: String {
         switch self {
+        case .tracking: "gearshape"
+        case .profile: "person.crop.circle"
         case .overview:
             "chart.bar.xaxis"
         case .reports:

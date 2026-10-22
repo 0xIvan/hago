@@ -2,17 +2,6 @@ import AppKit
 import SwiftUI
 import HagoCore
 
-struct SettingsView: View {
-    @EnvironmentObject private var appState: AppState
-
-    var body: some View {
-        DashboardView()
-        .onAppear {
-            appState.selectedSection = .rules
-        }
-    }
-}
-
 struct RulesSettingsView: View {
     @EnvironmentObject private var appState: AppState
     @State private var editingRule: Rule?

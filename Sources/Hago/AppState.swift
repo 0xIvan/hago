@@ -6,6 +6,8 @@ import ServiceManagement
 
 @MainActor
 final class AppState: ObservableObject {
+    let workProfileStore = WorkProfileStore()
+    let updater = AppUpdater()
     @Published var currentSnapshot: ActivitySnapshot?
     @Published var currentClassification: ClassificationResult?
     @Published var currentStateLabel = "Starting"
@@ -75,6 +77,7 @@ final class AppState: ObservableObject {
                 if let last = try store.recentSegments(limit: 1).first {
                     recorder = ActivityRecorder(notBefore: last.segment.endedAt)
                 }
+                workProfileStore.prepare(hasHistory: try !store.recentSegments(limit: 1).isEmpty, presetIDs: try store.enabledPresetIDs())
                 reviewAIAnalysisService = ReviewAIAnalysisService(store: store)
                 reviewAIScheduleState = try store.loadReviewAIScheduleState()
                 if reviewAIScheduleState.outcome == .running {
@@ -190,10 +193,6 @@ final class AppState: ObservableObject {
         openHagoWindow(section: .overview)
     }
 
-    func openSettingsWindow() {
-        openHagoWindow(section: .rules)
-    }
-
     private func openHagoWindow(section: HagoSection) {
         selectedSection = section
         prepareToOpenAppWindow()
@@ -228,6 +227,36 @@ final class AppState: ObservableObject {
 
             self.hideFromDockIfNoWindowsAreOpen()
         }
+    }
+
+    func applyWorkProfile(_ profile: inout WorkProfile) throws {
+        guard let store else { throw CocoaError(.fileNoSuchFile) }
+        let domains = profile.workDomains.split(whereSeparator: { $0.isNewline || $0 == "," }).map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        for domain in domains {
+            guard let url = URL(string: "https://" + domain), url.host == domain,
+                  domain.contains("."), !domain.contains("/"), !domain.contains(":"), !domain.contains("@"), !domain.contains("?"), !domain.contains("#"),
+                  domain.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-") }) else {
+                throw NSError(domain: "WorkProfile", code: 1, userInfo: [NSLocalizedDescriptionKey: "Enter plain work-only domains, without URLs, ports or paths."])
+            }
+        }
+        guard flushTracking() else { throw NSError(domain: "WorkProfile", code: 2, userInfo: [NSLocalizedDescriptionKey: trackingErrorMessage ?? "Save tracked time before changing your profile."]) }
+        var desired: [String: RuleCondition] = [:]
+        for app in profile.workApps { desired["app:" + app] = RuleCondition(field: .bundleIdentifier, operation: .equals, value: app) }
+        for domain in domains { desired["host:" + domain] = RuleCondition(field: .host, operation: .equals, value: domain) }
+        var updatedProfile = profile
+        let removedIDs = profile.ruleIDs.filter { desired[$0.key] == nil }.map(\.value)
+        updatedProfile.ruleIDs = profile.ruleIDs.filter { desired[$0.key] != nil }
+        let profileRules = desired.map { identity, condition in
+            let id = updatedProfile.ruleIDs[identity] ?? UUID()
+            updatedProfile.ruleIDs[identity] = id
+            return Rule(id: id, name: "Work Profile: " + condition.value, priority: 150, enabled: true, isBuiltIn: false,
+                        action: RuleAction(kind: .work, categoryID: categories.first { $0.kind == .work }?.id, projectID: nil), conditions: [condition], origin: .user)
+        }
+        for (identity, id) in updatedProfile.ruleIDs { profile.ruleIDs[identity] = id }
+        try store.applyWorkProfile(presetIDs: profile.presetIDs, rules: profileRules, removingRuleIDs: removedIDs)
+        profile = updatedProfile
+        try refresh()
+        clearReviewAISuggestions()
     }
 
     func requestAccessibilityPermission() {
