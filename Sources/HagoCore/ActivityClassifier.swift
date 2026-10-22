@@ -29,11 +29,11 @@ public struct ActivityClassifier {
             return ClassificationResult(kind: .ignored, categoryID: nil, projectID: nil, ruleID: nil)
         }
 
-        let matches = preparedRules.filter { matches(rule: $0, snapshot: snapshot) }
-        if let exclusion = matches.first(where: { $0.action.kind == .ignored }) {
+        let matchingRules = preparedRules.filter { matches(rule: $0, snapshot: snapshot) }
+        if let exclusion = matchingRules.first(where: { $0.action.kind == .ignored }) {
             return result(for: exclusion)
         }
-        let personalRules = matches.filter { $0.origin == .user }
+        let personalRules = matchingRules.filter { $0.origin == .user }
         if !personalRules.isEmpty {
             let narrowest = personalRules.filter { candidate in
                 !personalRules.contains { $0.parentRuleID == candidate.id }
@@ -41,16 +41,16 @@ public struct ActivityClassifier {
             let specificity = narrowest.map(scopeSpecificity).max() ?? 0
             return resolve(narrowest.filter { scopeSpecificity($0) == specificity })
         }
-        if let legacy = matches.first(where: { $0.origin == nil || $0.origin == .legacy }) {
+        if let legacy = matchingRules.first(where: { $0.origin == nil || $0.origin == .legacy }) {
             if snapshot.isDiscordWithoutTitle && legacy.isBuiltIn {
                 return ClassificationResult(kind: .review, categoryID: nil, projectID: nil, ruleID: nil,
                                             reason: "Discord channel context is unavailable")
             }
             return result(for: legacy)
         }
-        let aiRules = matches.filter { $0.origin == .ai }
+        let aiRules = matchingRules.filter { $0.origin == .ai }
         if !aiRules.isEmpty { return resolve(aiRules) }
-        return resolve(matches.filter { $0.origin == .preset })
+        return resolve(matchingRules.filter { $0.origin == .preset })
     }
 
     private func resolve(_ rules: [Rule]) -> ClassificationResult {
