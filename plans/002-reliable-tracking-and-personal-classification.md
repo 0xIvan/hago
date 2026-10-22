@@ -5,7 +5,9 @@
 - Blueprint prepared 2026-10-22 at `e403e24af6f27a2d98acaea53f03ef1a19999d06`.
 - Checkout was clean before blueprint preparation. Milestone A is implemented;
   verification evidence and remaining actual-system checks are recorded below.
-  Milestones B–F remain TODO.
+  Milestone A committed/pushed as `54c2622`. Milestones B–E and the F packaging/update implementation have been integrated
+  from isolated execution worktrees. Installed-app and distribution qualification
+  remain in progress; implementation alone is not production qualification.
 - Priority P0. Multi-stage effort; recording and migration changes carry high
   data-integrity risk. Individual stages should remain independently usable.
 - Audience: people who want to track their time and understand their work habits.
@@ -26,7 +28,7 @@
 2. Keep local SQLite storage, the native macOS app, and existing reports.
 3. Keep Work and Personal as purpose labels. Unresolved is uncertainty, not
    Personal and not evidence of wasted time. Keep the persisted `review` value
-   initially for compatibility; present it as Needs Review where appropriate.
+   initially for compatibility; present it as Needs review everywhere.
 4. Presets provide defaults. Explicit user choices override defaults.
 5. One correction changes selected records. Remembering a rule is a separate,
    explicit action; repeated corrections may suggest one but never silently
@@ -466,21 +468,55 @@ tracking; secrets remain in Keychain and AI transmission matches disclosure.
 Depends on A–E. Validate Developer ID identity, hardened runtime/entitlements,
 notarization and permission continuity on the packaged app. Extend existing ZIP
 release automation with a DMG, checksum, fresh-machine install and upgrade QA.
-Implement Check for Updates against published GitHub release metadata, with
-installed/released version comparison, release notes and a verified download
-link. Handle offline, error, no-update and newer-version states. Make this
-explicitly user initiated initially; do not auto-download or replace the app.
+Implement user-initiated Check for Updates using Sparkle, following the user's
+explicit mac-mirrorly reference. This supersedes the earlier metadata-only
+GitHub check design. Pin the dependency, use a Hago-specific Ed25519 trust key,
+and verify the appcast signature/artifact pipeline. No automatic background
+download/install; user-facing checks must handle offline, error, current and
+newer-version states, including the initial absence of a published appcast.
 Version the app bundle from the release version so comparisons are meaningful.
-Do not bundle an unreviewed updater framework into the tracking refactor. No
-public release or credential changes are part of blueprint preparation. Update
-checks are disclosed release-metadata requests, not analytics or activity sync;
-never attach tracking data to them.
+Review/package Sparkle's nested helpers and signing as part of distribution.
+Fresh local Hago update-signing key generation is authorized; private material
+stays in Keychain, only its public trust key is committed. No public release,
+tag publication, or unrelated credential changes. Update checks are disclosed
+release requests, not analytics or activity sync; never attach tracking data.
 
 Done when: the actual downloaded build installs and launches under Gatekeeper,
 captures through granted permissions, upgrades existing data, and has a tested
 way to discover and obtain subsequent releases from the installed app. Check
 for Updates handles current, newer and offline cases. Do not infer this from CI
 success alone.
+
+## Additional user findings accepted during implementation
+
+These requirements supersede narrower earlier proposals and are included in
+the active implementation, not a backlog requiring another confirmation:
+
+- P0: migrate the owner-specific Discord rule to custom (`isBuiltIn = false`)
+  for existing users, omit it for new installs, and remove Discord-specific
+  Accessibility permission copy. Unknown native apps default Needs review only
+  for new observations; never silently relabel existing history.
+- P0: Open at Login (A) and manual Sparkle update checks (F); week date fix (A).
+- P1: compare a partial current report with the same elapsed portion of the
+  prior period. Historical complete periods still compare complete periods.
+- P1: dashboard sidebar contains Overview, Reports, Needs review and Activity.
+  A real Settings scene, available through Command-comma, contains Rules,
+  Projects, Categories, Privacy and AI suggestions, plus profile/general needs.
+  Rename popover action Open Hago and open Overview.
+- P1: missing Accessibility permission is a permission state with Grant Access…
+  in the popover, not an error. Menu durations use `2h46 · 11h50` rather than
+  clock-like colon notation.
+- P1: AI suggestions replaces AI Harness as the user-facing name. Connection
+  choice and consent lead; model/reasoning/custom model live under Advanced.
+  Direct provider setup remains an alternative to existing CLI setup.
+- P1: use the display label Needs review consistently across navigation,
+  categories and headings without changing persisted `review` identities.
+- P2: Review groups lead with site/title, with the app as metadata. Keyboard
+  W/P/I actions must not fire while typing into a text field.
+- P2: built-in rules collapse by default; attention indicators identify actual
+  conflicts/duplicates rather than treating built-in defaults as problems.
+- P2: default today timeline includes the whole Hago day from 04:00 and all
+  captured data, instead of a hardcoded 08:00 start. Preserve zoom/pan behavior.
 
 ## Verification and measurement
 
@@ -525,3 +561,43 @@ confirmation gates. Resolve routine design/code choices within these decisions.
 Each milestone should report changed behavior, migration impact, automated and
 actual-app verification, and known limitations. Update the plan index as work
 lands. Do not require a single monolithic PR or rewrite to deliver this revision.
+
+
+## Integrated delivery evidence — 2026-10-22
+
+- B/C: ordered schema v1 migration with a consistent SQLite backup, rule origin
+  and conflict handling, privacy exclusions, unknown-to-review for new activity,
+  versioned General Work/Software Development packs and user override tombstones.
+  Shared tools need confirmed user context. No 80 percent coverage claim.
+- D: scoped remembered-rule preview, transactional correction and bounded
+  persistent undo, repeated-correction suggestions and dismissals. Review leads
+  with site/title, supports focused W/P/I, and retains the entire backlog.
+- E: resumable work profile, detected installed tools, real Settings scene,
+  optional direct Anthropic/OpenAI connections alongside existing CLIs, Keychain
+  credentials and explicit disclosure. Titles are excluded by default, outgoing
+  evidence is bounded/redacted, redirects and automatic paid fallback are denied.
+- Reports compare elapsed local time against the equivalent prior period; the
+  timeline begins at the Hago day boundary and menu durations use hour/minute units.
+- F implementation: com.ivan.hago, version 0.2.0 build 2; one-time preference
+  domain migration; pinned Sparkle with manual checks; Developer ID/notarization,
+  DMG, checksum and appcast-verification scripts. No public tag/release created.
+- Integrated swift test passed 139 core and 9 app tests. Permanent additions cover
+  migration/data integrity, classification authority, privacy/disclosure, undo,
+  calendar comparisons and preserving upgrade/onboarding choices. Temporary
+  Keychain checks exercised save/read/update/delete under a unique fixture service.
+- A consistent copy of the real database upgraded/reopened with 91,659 records,
+  zero missing IDs or changed boundaries/classifications, custom owner Discord
+  rule, normalized stock Needs review category and SQLite quick_check = ok.
+  Live upgrade preserved existing classifications and AI preferences.
+- The installed app is signed with the existing stable local certificate and has
+  com.ivan.hago. Installation exposed Launch Services selecting a staged copy;
+  the installer now opens a new instance at the explicit /Applications path.
+  An installed UI launch exposed a Charts crash. LLDB caught the missing Review
+  colour-scale lookup; marks/scales now share ActivityKind.displayName. All 148
+  tests passed again and the reinstalled /Applications process remains running.
+- Remaining qualification: finish installed UI checks (the native tool currently
+  resolves the old bundle identity after the rename), produce/verify the
+  notarized candidate, sign its final
+  appcast, and exercise an old-to-new update using two notarized versions. Real
+  logout/login, fresh-machine, minimum-OS and Intel qualification are not proven.
+  No real provider API request was made without a configured user connection.
