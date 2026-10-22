@@ -144,7 +144,7 @@ public final class HagoStore {
     }
 
     public func save(segment: ActivitySegment, classification: SegmentClassification) throws {
-        guard classification.kind != .ignored else {
+        guard classification.kind != .ignored, !segment.isPrivate else {
             return
         }
 
@@ -154,7 +154,7 @@ public final class HagoStore {
     }
 
     public func checkpoint(segment: ActivitySegment, classification: SegmentClassification) throws {
-        guard classification.kind != .ignored else { return }
+        guard classification.kind != .ignored, !segment.isPrivate else { return }
         try transaction {
             if try loadClassification(segmentID: segment.id) != nil {
                 try execute(
@@ -320,7 +320,7 @@ public final class HagoStore {
             let origin: RuleOrigin
             if rule.isBuiltIn {
                 origin = .builtIn
-            } else if aiRuleIDs.contains(rule.id) {
+            } else if rule.origin == .ai || aiRuleIDs.contains(rule.id) {
                 origin = .ai
             } else if rule.name.trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased().hasPrefix("remember ") {
@@ -976,6 +976,7 @@ public final class HagoStore {
         )
         let existingRule = try loadRules().first { rememberedRuleSignature($0) == rememberedRuleSignature(rule) }
         if var existingRule {
+            guard existingRule.enabled || existingRule.origin != .user else { return nil }
             let ruleChange: ReviewAIRuleChange = existingRule.enabled ? .reused : .reenabled
             existingRule.enabled = true
             return ReviewAISuggestionApplyPlan(
@@ -1706,6 +1707,7 @@ public final class HagoStore {
         )
 
         guard classification != candidate.classification else {
+            try saveReason(result.reason, segmentID: candidate.segment.id)
             return
         }
 
@@ -2388,24 +2390,30 @@ extension HagoStore {
         guard version <= 1 else { throw HagoStoreError.unsupportedSchema(version) }
         guard version == 0 else { return }
         let existing = try query("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='activity_segments'") { intColumn($0, 0) }.first == 1
-        if existing {
-            try backup(to: databaseURL.deletingLastPathComponent().appendingPathComponent("\(databaseURL.lastPathComponent).pre-v1-\(UUID().uuidString).sqlite"))
-        }
-        try transaction {
-            try migrate()
-            try execute("ALTER TABLE rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'legacy'")
-            try execute("ALTER TABLE rules ADD COLUMN preset_id TEXT")
-            try execute("ALTER TABLE rules ADD COLUMN parent_rule_id TEXT")
-            try execute("CREATE TABLE classification_reasons(segment_id TEXT PRIMARY KEY REFERENCES activity_segments(id) ON DELETE CASCADE, reason TEXT NOT NULL)")
-            try execute("INSERT INTO classification_reasons SELECT segment_id, CASE WHEN is_manual=1 THEN 'Your explicit correction (legacy)' ELSE 'Legacy classification; original reason unavailable' END FROM classifications")
-            try execute("CREATE TABLE preset_selections(pack_id TEXT PRIMARY KEY, version INTEGER NOT NULL)")
-            try execute("CREATE TABLE preset_tombstones(rule_id TEXT PRIMARY KEY)")
-            try execute("CREATE TABLE correction_actions(id TEXT PRIMARY KEY, created_at REAL NOT NULL, rule_id TEXT, rule_fingerprint TEXT, undone INTEGER NOT NULL DEFAULT 0)")
-            try execute("CREATE TABLE correction_changes(action_id TEXT NOT NULL REFERENCES correction_actions(id) ON DELETE CASCADE, segment_id TEXT NOT NULL REFERENCES activity_segments(id) ON DELETE CASCADE, before_payload TEXT NOT NULL, after_payload TEXT NOT NULL, before_reason TEXT NOT NULL, PRIMARY KEY(action_id, segment_id))")
-            try execute("CREATE TABLE learning_dismissals(context_key TEXT PRIMARY KEY, evidence_key TEXT NOT NULL)")
-            if !existing { try seedIfNeeded() }
-            try execute("UPDATE rules SET is_built_in=0 WHERE id='20000000-0000-0000-0000-000000000014'")
-            try execute("PRAGMA user_version=1")
+        let backupURL = existing ? databaseURL.deletingLastPathComponent().appendingPathComponent("\(databaseURL.lastPathComponent).pre-v1-\(UUID().uuidString).sqlite") : nil
+        if let backupURL { try backup(to: backupURL) }
+        do {
+            try transaction {
+                try migrate()
+                try execute("ALTER TABLE rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'legacy'")
+                try execute("ALTER TABLE rules ADD COLUMN preset_id TEXT")
+                try execute("ALTER TABLE rules ADD COLUMN parent_rule_id TEXT")
+                try execute("CREATE TABLE classification_reasons(segment_id TEXT PRIMARY KEY REFERENCES activity_segments(id) ON DELETE CASCADE, reason TEXT NOT NULL)")
+                try execute("INSERT INTO classification_reasons SELECT segment_id, CASE WHEN is_manual=1 THEN 'Your explicit correction (legacy)' ELSE 'Legacy classification; original reason unavailable' END FROM classifications")
+                try execute("CREATE TABLE preset_selections(pack_id TEXT PRIMARY KEY, version INTEGER NOT NULL)")
+                try execute("CREATE TABLE preset_tombstones(rule_id TEXT PRIMARY KEY)")
+                try execute("CREATE TABLE correction_actions(id TEXT PRIMARY KEY, created_at REAL NOT NULL, rule_id TEXT, rule_fingerprint TEXT, undone INTEGER NOT NULL DEFAULT 0)")
+                try execute("CREATE TABLE correction_changes(action_id TEXT NOT NULL REFERENCES correction_actions(id) ON DELETE CASCADE, segment_id TEXT NOT NULL REFERENCES activity_segments(id) ON DELETE CASCADE, before_payload TEXT NOT NULL, after_payload TEXT NOT NULL, before_reason TEXT NOT NULL, PRIMARY KEY(action_id, segment_id))")
+                try execute("CREATE TABLE learning_dismissals(context_key TEXT PRIMARY KEY, evidence_key TEXT NOT NULL)")
+                if !existing { try seedIfNeeded() }
+                try execute("UPDATE rules SET is_built_in=0 WHERE id='20000000-0000-0000-0000-000000000014'")
+                try execute("PRAGMA user_version=1")
+            }
+        } catch {
+            if let backupURL {
+                throw HagoStoreError.failedToStep("Database upgrade rolled back. Backup: \(backupURL.path). \(error.localizedDescription)")
+            }
+            throw error
         }
     }
 
@@ -2418,6 +2426,7 @@ extension HagoStore {
             throw HagoStoreError.failedToOpenDatabase("Could not create pre-migration backup")
         }
         defer { sqlite3_close(target) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
         guard let backup = sqlite3_backup_init(target, "main", database, "main") else {
             throw HagoStoreError.failedToStep("Could not start consistent database backup")
         }
@@ -2504,6 +2513,7 @@ extension HagoStore {
                 try saveClassification(after)
                 try saveReason(result.reason, segmentID: candidate.segment.id)
             }
+            try pruneCorrectionActions()
         }
         return actionID
     }
@@ -2521,6 +2531,7 @@ extension HagoStore {
                 try recordCorrection(actionID: actionID, before: before, after: after)
                 try saveClassification(after)
             }
+            try pruneCorrectionActions()
         }
         return actionID
     }
@@ -2565,6 +2576,10 @@ extension HagoStore {
             try execute("UPDATE correction_actions SET undone=1 WHERE id=?", bindings: [.text(id.uuidString)])
         }
         return restored
+    }
+
+    private func pruneCorrectionActions() throws {
+        try execute("DELETE FROM correction_actions WHERE id IN (SELECT id FROM correction_actions ORDER BY created_at DESC LIMIT -1 OFFSET 100)")
     }
 
     private func recordCorrection(actionID: UUID, before: SegmentClassification, after: SegmentClassification) throws {

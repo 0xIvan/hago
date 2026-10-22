@@ -126,6 +126,20 @@ struct ClassificationLearningIntegrityTests {
         #expect(try reopened.learningSuggestions().isEmpty)
     }
 
+    @Test
+    func privateSnapshotNeverBecomesDurableEvenWithAnIncorrectCallerLabel() throws {
+        let store = try HagoStore(databaseURL: databaseURL())
+        let snapshot = ActivitySnapshot(appName: "Google Chrome", bundleIdentifier: "com.google.Chrome", processIdentifier: 1,
+                                        windowTitle: "Private title", url: "https://private.example", source: .chrome, isPrivate: true)
+        let segment = ActivitySegment(startedAt: Date(), endedAt: Date().addingTimeInterval(60), snapshot: snapshot)
+        try store.save(segment: segment, classification: classification(segment.id, kind: .work))
+        try store.checkpoint(segment: segment, classification: classification(segment.id, kind: .work))
+        #expect(try store.recentSegments(limit: 10).isEmpty)
+        let security = ActivitySnapshot(appName: "SecurityAgent", bundleIdentifier: "com.apple.SecurityAgent", processIdentifier: 2,
+                                        windowTitle: "Authentication", url: nil, source: .macOS)
+        #expect(ActivityClassifier().classify(snapshot: security, rules: []).kind == .ignored)
+    }
+
     private func classification(_ id: UUID, kind: ActivityKind = .review) -> SegmentClassification {
         SegmentClassification(segmentID: id, kind: kind, categoryID: nil, projectID: nil, ruleID: nil, isManual: false)
     }

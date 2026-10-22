@@ -70,7 +70,7 @@ private struct OverviewTab: View {
                 HStack(spacing: 12) {
                     MetricView(title: "Work", value: formatter.compactDuration(appState.todaySummary.workSeconds), color: .blue)
                     MetricView(title: "Personal", value: formatter.compactDuration(appState.todaySummary.personalSeconds), color: .green)
-                    MetricView(title: "Review", value: formatter.compactDuration(appState.todaySummary.reviewSeconds), color: .orange)
+                    MetricView(title: "Needs Review", value: formatter.compactDuration(appState.todaySummary.reviewSeconds), color: .orange)
                 }
 
                 HStack(alignment: .top, spacing: 16) {
@@ -120,7 +120,8 @@ private struct ReviewTab: View {
         .focusable()
         .focused($listHasKeyboardFocus)
         .onKeyPress(characters: CharacterSet(charactersIn: "wWpPiI")) { press in
-            guard listHasKeyboardFocus, !(NSApp.keyWindow?.firstResponder is NSTextView),
+            guard press.modifiers.intersection([.command, .control, .option]).isEmpty,
+                  listHasKeyboardFocus, !(NSApp.keyWindow?.firstResponder is NSTextView),
                   let id = selectedGroupID, let group = appState.reviewGroups.first(where: { $0.id == id }) else { return .ignored }
             let key = press.characters.lowercased()
             appState.classifyReviewGroup(group, as: key == "w" ? .work : key == "p" ? .personal : .ignored)
@@ -215,7 +216,7 @@ private struct ReviewTab: View {
             case .idle:
                 EmptyView()
             case .analyzing:
-                Text("Analyzing grouped Review activity")
+                Text("Analyzing activity that needs review")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
@@ -1240,7 +1241,7 @@ private struct DailyTimelineChart: View {
         .chartForegroundStyleScale([
             "Work": .blue,
             "Personal": .green,
-            "Review": .orange
+            "Needs Review": .orange
         ])
         .chartLegend(position: .bottom, spacing: 16)
         .chartXScale(domain: ["Today"])

@@ -36,7 +36,6 @@ final class AppState: ObservableObject {
 
     private let reader = ActiveWindowReader()
     private let classifier = ActivityClassifier()
-    private let rememberedRuleFactory = RememberedRuleFactory()
     private let reviewAISettingsStore: ReviewAISettingsStore
     private let reviewAIHarnessDiscovery: ReviewAIHarnessDiscovery
     private let formatter = TimeFormatting()
@@ -51,6 +50,8 @@ final class AppState: ObservableObject {
     private var captureTask: Task<Void, Never>?
     private var captureRevision = 0
     @Published var captureCapabilityLabel = "Checking capture capabilities"
+    @Published var chromeAutomationGranted = false
+    @Published var chromePermissionRequestPending = false
     private var recorder = ActivityRecorder()
     private var pendingCheckpoints: [UUID: ActivitySegment] = [:]
     private var lifecycleObservers: [(NotificationCenter, NSObjectProtocol)] = []
@@ -291,6 +292,7 @@ final class AppState: ObservableObject {
         activitySegments = try store.activitySegments(for: activityDate)
         recentSegments = try store.recentSegments(limit: 20)
         accessibilityTrusted = reader.accessibilityIsTrusted()
+        chromeAutomationGranted = reader.chromeAutomationIsGranted()
         reviewAISuggestions = try reviewAIAnalysisService?.savedSuggestions(context: reviewAIAnalysisContext) ?? []
     }
 
@@ -777,6 +779,20 @@ final class AppState: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
+    func requestChromeAccess() {
+        guard !chromePermissionRequestPending else { return }
+        chromePermissionRequestPending = true
+        Task {
+            chromeAutomationGranted = await reader.requestChromeAutomationPermission()
+            chromePermissionRequestPending = false
+            captureCapabilityLabel = reader.captureCapabilityLabel()
+            if !chromeAutomationGranted {
+                errorMessage = "Chrome access was not granted. Open Chrome, then enable Hago → Google Chrome in System Settings → Privacy & Security → Automation."
+            } else { errorMessage = nil }
+            tick()
+        }
+    }
+
     func classificationExplanation(for entry: ClassifiedSegment) -> String {
         (try? store?.classificationExplanation(for: entry)) ?? "Classification reason unavailable"
     }
@@ -969,6 +985,7 @@ final class AppState: ObservableObject {
         }
         checkScheduledReview()
         captureCapabilityLabel = reader.captureCapabilityLabel()
+        chromeAutomationGranted = reader.chromeAutomationIsGranted()
         guard captureTask == nil else { return }
         let revision = captureRevision
         captureTask = Task { [weak self] in

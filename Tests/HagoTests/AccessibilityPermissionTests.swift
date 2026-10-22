@@ -4,6 +4,18 @@ import Testing
 @Suite
 struct AccessibilityPermissionTests {
     @Test
+    func chromePermissionChecksNeverRequestConsent() {
+        var checks: [Bool] = []
+        let reader = ActiveWindowReader(chromeAutomationPermission: { request in
+            checks.append(request)
+            return -1744
+        })
+        #expect(!reader.chromeAutomationIsGranted())
+        #expect(!reader.chromeAutomationIsGranted())
+        #expect(checks == [false, false])
+    }
+
+    @Test
     func grantedAccessDoesNotPrompt() {
         var prompts = 0
         let reader = ActiveWindowReader(

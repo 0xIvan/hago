@@ -96,6 +96,7 @@ public struct ActivitySegment: Identifiable, Equatable, Sendable {
     public var windowTitle: String
     public var url: String?
     public var source: ActivitySource
+    public var isPrivate: Bool
 
     public init(
         id: UUID = UUID(),
@@ -112,6 +113,7 @@ public struct ActivitySegment: Identifiable, Equatable, Sendable {
         windowTitle = snapshot.windowTitle
         url = snapshot.url
         source = snapshot.source
+        isPrivate = snapshot.isPrivate
     }
 
     public var duration: TimeInterval {
@@ -125,7 +127,8 @@ public struct ActivitySegment: Identifiable, Equatable, Sendable {
             processIdentifier: processIdentifier,
             windowTitle: windowTitle,
             url: url,
-            source: source
+            source: source,
+            isPrivate: isPrivate
         )
     }
 }

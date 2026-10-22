@@ -130,20 +130,6 @@ public struct ActivityClassifier {
         }
     }
 
-    private func isBrowser(snapshot: ActivitySnapshot) -> Bool {
-        let app = snapshot.appName.lowercased()
-        let bundle = snapshot.bundleIdentifier.lowercased()
-
-        return app.contains("chrome")
-            || app.contains("safari")
-            || app.contains("arc")
-            || app.contains("firefox")
-            || bundle.contains("chrome")
-            || bundle.contains("safari")
-            || bundle.contains("arc")
-            || bundle.contains("firefox")
-    }
-
     private func isUnsafeRememberedBrowserAppRule(_ rule: Rule) -> Bool {
         guard !rule.isBuiltIn,
               rule.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("remember "),
@@ -166,5 +152,6 @@ public struct ActivityClassifier {
         let bundle = snapshot.bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         return app == "loginwindow" || bundle == "com.apple.loginwindow"
+            || app == "securityagent" || bundle == "com.apple.securityagent"
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -7,16 +8,21 @@ import HagoCore
 struct ActiveWindowReader {
     private let accessibilityTrustCheck: () -> Bool
     private let accessibilityPermissionPrompt: () -> Void
+    private let chromeAutomationPermission: (Bool) -> OSStatus
 
     init(
         accessibilityTrustCheck: @escaping () -> Bool = { AXIsProcessTrusted() },
         accessibilityPermissionPrompt: @escaping () -> Void = {
             let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
             AXIsProcessTrustedWithOptions(options)
+        },
+        chromeAutomationPermission: @escaping (Bool) -> OSStatus = {
+            ActiveWindowReader.chromeAutomationPermissionStatus(requestPermission: $0)
         }
     ) {
         self.accessibilityTrustCheck = accessibilityTrustCheck
         self.accessibilityPermissionPrompt = accessibilityPermissionPrompt
+        self.chromeAutomationPermission = chromeAutomationPermission
     }
 
     @MainActor
@@ -34,7 +40,9 @@ struct ActiveWindowReader {
         guard let app = NSWorkspace.shared.frontmostApplication else { return "No foreground application" }
         let bundle = app.bundleIdentifier ?? ""
         if bundle == "com.google.Chrome" {
-            return "Chrome: context available only when Automation access and public-window status are verified"
+            return chromeAutomationIsGranted()
+                ? "Chrome: Automation granted; public-window context verified per observation"
+                : "Chrome: tracking paused; Automation permission is missing. Use Allow Chrome Access in Tracking & Privacy."
         }
         if BrowserCapturePolicy.isBrowser(bundleIdentifier: bundle, appName: app.localizedName ?? "") {
             return "\(app.localizedName ?? "Browser"): capture paused because private-window status cannot be verified"
@@ -54,6 +62,28 @@ struct ActiveWindowReader {
             url: chromeInfo?.url, source: chromeInfo == nil ? .macOS : .chrome,
             isPrivate: chromeInfo?.isPrivate ?? false
         )
+    }
+
+    func chromeAutomationIsGranted() -> Bool {
+        chromeAutomationPermission(false) == noErr
+    }
+
+    @MainActor
+    func requestChromeAutomationPermission() async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            Self.chromeAutomationPermissionStatus(requestPermission: true) == noErr
+        }.value
+    }
+
+    private static func chromeAutomationPermissionStatus(requestPermission: Bool) -> OSStatus {
+        var target = AEAddressDesc()
+        let bundleID = Data("com.google.Chrome".utf8)
+        let status = bundleID.withUnsafeBytes { bytes in
+            AECreateDesc(DescType(typeApplicationBundleID), bytes.baseAddress, bytes.count, &target)
+        }
+        guard status == noErr else { return OSStatus(status) }
+        defer { AEDisposeDesc(&target) }
+        return AEDeterminePermissionToAutomateTarget(&target, AEEventClass(typeWildCard), AEEventID(typeWildCard), requestPermission)
     }
 
     func accessibilityIsTrusted() -> Bool {
@@ -127,7 +157,7 @@ struct ActiveWindowReader {
     }
 
     private static func chromeTabInfo(bundleIdentifier: String, appName: String) -> ChromeTabInfo? {
-        guard bundleIdentifier == "com.google.Chrome" else {
+        guard bundleIdentifier == "com.google.Chrome", chromeAutomationPermissionStatus(requestPermission: false) == noErr else {
             return nil
         }
 
