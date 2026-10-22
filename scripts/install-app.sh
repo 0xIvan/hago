@@ -69,6 +69,6 @@ fi
 
 rm -rf "$TARGET_APP"
 ditto "$SOURCE_APP" "$TARGET_APP"
-open "$TARGET_APP"
+open -n "$TARGET_APP"
 
 echo "$TARGET_APP"
