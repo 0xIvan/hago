@@ -70,7 +70,7 @@ private struct OverviewTab: View {
                 HStack(spacing: 12) {
                     MetricView(title: "Work", value: formatter.compactDuration(appState.todaySummary.workSeconds), color: .blue)
                     MetricView(title: "Personal", value: formatter.compactDuration(appState.todaySummary.personalSeconds), color: .green)
-                    MetricView(title: "Needs Review", value: formatter.compactDuration(appState.todaySummary.reviewSeconds), color: .orange)
+                    MetricView(title: ActivityKind.review.displayName, value: formatter.compactDuration(appState.todaySummary.reviewSeconds), color: .orange)
                 }
 
                 HStack(alignment: .top, spacing: 16) {
@@ -1227,7 +1227,7 @@ private struct DailyTimelineChart: View {
                     yEnd: .value("Time", span.endedAt),
                     width: .fixed(barWidth)
                 )
-                .foregroundStyle(by: .value("Type", span.kind.rawValue.capitalized))
+                .foregroundStyle(by: .value("Type", span.kind.displayName))
                 .accessibilityLabel(span.kind.displayName)
                 .accessibilityValue("\(span.startedAt.formatted(date: .omitted, time: .shortened)) – \(span.endedAt.formatted(date: .omitted, time: .shortened)), \(formatter.compactDuration(span.endedAt.timeIntervalSince(span.startedAt)))")
             }
@@ -1241,7 +1241,7 @@ private struct DailyTimelineChart: View {
         .chartForegroundStyleScale([
             "Work": .blue,
             "Personal": .green,
-            "Needs Review": .orange
+            ActivityKind.review.displayName: .orange
         ])
         .chartLegend(position: .bottom, spacing: 16)
         .chartXScale(domain: ["Today"])

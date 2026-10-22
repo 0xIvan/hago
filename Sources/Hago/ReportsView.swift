@@ -253,7 +253,7 @@ private struct ReportPeriodChart: View {
                     x: .value("Period", bucketTitle(bucket, index: index)),
                     y: .value("Hours", bucket.reviewSeconds / 3_600)
                 )
-                .foregroundStyle(by: .value("Type", "Review"))
+                .foregroundStyle(by: .value("Type", ActivityKind.review.displayName))
             }
 
             if let selectedBucket,
@@ -266,7 +266,7 @@ private struct ReportPeriodChart: View {
         .chartForegroundStyleScale([
             "Work": .blue,
             "Personal": .green,
-            "Review": .orange
+            ActivityKind.review.displayName: .orange
         ])
         .chartYScale(domain: 0...maximumHours)
         .chartOverlay { proxy in
@@ -361,7 +361,7 @@ private struct ReportChartTooltip: View {
 
             tooltipRow("Work", seconds: bucket.workSeconds, color: .blue)
             tooltipRow("Personal", seconds: bucket.personalSeconds, color: .green)
-            tooltipRow("Review", seconds: bucket.reviewSeconds, color: .orange)
+            tooltipRow(ActivityKind.review.displayName, seconds: bucket.reviewSeconds, color: .orange)
             tooltipRow("Total", seconds: bucket.workSeconds + bucket.personalSeconds + bucket.reviewSeconds, color: .primary)
         }
         .font(.caption)
