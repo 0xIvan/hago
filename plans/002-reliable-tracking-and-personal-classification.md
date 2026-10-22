@@ -601,3 +601,33 @@ lands. Do not require a single monolithic PR or rewrite to deliver this revision
   appcast, and exercise an old-to-new update using two notarized versions. Real
   logout/login, fresh-machine, minimum-OS and Intel qualification are not proven.
   No real provider API request was made without a configured user connection.
+
+
+### Final candidate verification — 2026-10-22
+
+- Source commit `7b9cae6dad4239b4f7ce0efa70c8b4281e17efbc`. CI additionally
+  caught and prompted a local-variable rename for compatibility with its older
+  Swift compiler. All 148 tests passed locally again; CI test/package passed.
+- Artifact-only run https://github.com/0xIvan/uso/actions/runs/39842690032 reused
+  the existing authorized Apple signing secrets without exporting them. Only a
+  temporary branch workflow was added; neither Uso default branch was changed
+  nor a Hago public tag/release created. Hago still has no provisioned CI secrets;
+  repeat notarization currently uses this existing signing environment.
+- Apple accepted app and DMG notarization. Downloaded arm64 artifacts retained
+  at `~/Downloads/Hago-0.2.0-7b9cae6/`, outside ignored/generated source outputs.
+  Both checksums match CI, both stapled tickets validate, both Gatekeeper
+  assessments report Notarized Developer ID, deep strict codesign verifies,
+  and the bundle is com.ivan.hago, version 0.2.0 build 2, team AB879DAVK8.
+- The actual downloaded notarized app replaced /Applications/Hago.app and was
+  reopened. Its process remains running. SQLite quick_check passes, schema1,
+  with no nonpositive recorded intervals. No claim of full UI verification: the
+  native tool retained the former identity and then its connection closed.
+- Final appcast was signed locally using Hago's Keychain key and verified against
+  the public key in the downloaded app. A modified signature was rejected.
+  No private signing key was exported or added to GitHub. Feed and artifacts
+  remain unpublished, so production Check for Updates has no published feed yet.
+- Remaining release qualification: actual screen-by-screen checks after restoring
+  native control, a private two-version Sparkle update install, fresh-machine,
+  minimum-OS/Intel, real sleep/wake and logout/login. Direct provider adapters
+  and Keychain behavior passed synthetic checks; no real paid API call was made.
+  These are explicit limitations rather than a production-ready certification.
