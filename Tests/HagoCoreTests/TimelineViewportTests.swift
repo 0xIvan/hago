@@ -4,10 +4,10 @@ import HagoCore
 
 struct TimelineViewportTests {
     @Test
-    func defaultsToEightAMThroughMidnightIncludingBeforeTheDayCutoff() throws {
+    func defaultsToTheFullTrackingDayIncludingBeforeTheDayCutoff() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
-        let expected = DateInterval(start: try date("2026-09-10T08:00:00Z"), end: try date("2026-09-11T00:00:00Z"))
+        let expected = DateInterval(start: try date("2026-09-10T04:00:00Z"), end: try date("2026-09-11T04:00:00Z"))
 
         for time in ["2026-09-10T14:00:00Z", "2026-09-11T03:00:00Z"] {
             #expect(TimelineViewport.defaultInterval(for: try date(time), calendar: calendar) == expected)
@@ -49,7 +49,7 @@ struct TimelineViewportTests {
     }
 
     @Test
-    func defaultAxisIncludesEightAMAndMidnightOnWholeHours() throws {
+    func defaultAxisIncludesBothTrackingDayBoundariesOnWholeHours() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
         let interval = TimelineViewport.defaultInterval(for: try date("2026-09-10T13:23:00Z"), calendar: calendar)
@@ -57,7 +57,7 @@ struct TimelineViewportTests {
 
         #expect(ticks.first == interval.start)
         #expect(ticks.last == interval.end)
-        #expect(ticks.map { calendar.component(.hour, from: $0) } == [8, 10, 12, 14, 16, 18, 20, 22, 0])
+        #expect(ticks.map { calendar.component(.hour, from: $0) } == [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 0, 2, 4])
         #expect(ticks.allSatisfy { calendar.component(.minute, from: $0) == 0 })
     }
 

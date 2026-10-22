@@ -2,11 +2,7 @@ import Foundation
 
 public enum TimelineViewport {
     public static func defaultInterval(for day: Date, calendar: Calendar) -> DateInterval {
-        let hagoDay = HagoCalendar.shared.dayInterval(containing: day, calendar: calendar)
-        let midnight = calendar.startOfDay(for: hagoDay.start)
-        let start = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: midnight) ?? hagoDay.start
-        let end = calendar.date(byAdding: .day, value: 1, to: midnight) ?? hagoDay.end
-        return DateInterval(start: start, end: end)
+        HagoCalendar.shared.dayInterval(containing: day, calendar: calendar)
     }
 
     public static func zoom(

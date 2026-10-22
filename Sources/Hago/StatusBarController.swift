@@ -74,40 +74,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
 
         button.attributedTitle = statusTitle(appState.menuBarTitle)
-        button.setAccessibilityLabel("Hago \(appState.menuBarTitle)")
+        button.setAccessibilityLabel(appState.menuBarAccessibilityLabel)
     }
 
     private func statusTitle(_ value: String) -> NSAttributedString {
-        let font = statusTextFont()
-        let parts = value.components(separatedBy: " | ")
-        guard parts.count == 2 else {
-            return NSAttributedString(
-                string: value,
-                attributes: [.font: font]
-            )
-        }
-
-        let title = NSMutableAttributedString(
-            string: "\(parts[0]) ",
-            attributes: [.font: font]
-        )
-        title.append(
-            NSAttributedString(
-                string: "|",
-                attributes: [
-                    .font: font,
-                    .baselineOffset: 1
-                ]
-            )
-        )
-        title.append(
-            NSAttributedString(
-                string: " \(parts[1])",
-                attributes: [.font: font]
-            )
-        )
-
-        return title
+        NSAttributedString(string: value, attributes: [.font: statusTextFont()])
     }
 
     private func statusTextFont() -> NSFont {

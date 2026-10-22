@@ -109,7 +109,15 @@ final class AppState: ObservableObject {
         let workDuration = formatter.menuBarWorkDuration(todaySummary.workSeconds)
         let totalDuration = formatter.menuBarWorkDuration(todayTrackedSeconds)
 
-        return "\(workDuration) | \(totalDuration)"
+        return "\(workDuration) · \(totalDuration)"
+    }
+
+    var menuBarAccessibilityLabel: String {
+        func spokenDuration(_ seconds: TimeInterval) -> String {
+            let wholeMinutes = max(0, Int(seconds.rounded())) / 60
+            return Duration.seconds(wholeMinutes * 60).formatted(.units(allowed: [.hours, .minutes], width: .wide))
+        }
+        return "Hago. Work: \(spokenDuration(todaySummary.workSeconds)). Total tracked: \(spokenDuration(todayTrackedSeconds))."
     }
 
     var todayTrackedSeconds: TimeInterval {
@@ -320,17 +328,16 @@ final class AppState: ObservableObject {
     func loadReportPair(
         for periodKind: ReportPeriodKind,
         containing date: Date
-    ) -> (current: ReportSummary, previous: ReportSummary)? {
+    ) -> ReportComparison? {
         do {
             guard let store else {
                 return nil
             }
 
-            let current = try store.reportSummary(for: periodKind, containing: date)
-            let previous = try store.previousReportSummary(for: periodKind, containing: date)
+            let comparison = try store.reportComparison(for: periodKind, containing: date, now: Date())
             errorMessage = nil
 
-            return (current, previous)
+            return comparison
         } catch {
             errorMessage = error.localizedDescription
             return nil

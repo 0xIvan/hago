@@ -6,7 +6,7 @@ struct ReportsView: View {
     @EnvironmentObject private var appState: AppState
     @State private var mode = ReportMode.weeks
     @State private var anchorDate = Date()
-    @State private var reportPair: (current: ReportSummary, previous: ReportSummary)?
+    @State private var reportPair: ReportComparison?
 
     private let formatter = TimeFormatting()
 
@@ -100,7 +100,7 @@ struct ReportsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(periodTitle(report))
                 .font(.title2.weight(.semibold))
-            Text("Compared with \(periodTitle(previous))")
+            Text("Compared with \(periodTitle(previous))\(reportPair?.window.comparesElapsedPortion == true ? " · same elapsed portion" : "")")
                 .foregroundStyle(.secondary)
         }
     }

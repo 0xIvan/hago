@@ -1226,6 +1226,22 @@ public final class HagoStore {
         )
     }
 
+    public func reportComparison(
+        for periodKind: ReportPeriodKind, containing date: Date, now: Date
+    ) throws -> ReportComparison {
+        let window = ReportComparisonWindow(for: periodKind, containing: date, now: now)
+        let bucketKind: ReportBucketKind = periodKind == .week ? .day : .week
+        let current = try reportSummary(
+            for: periodKind, startingAt: window.currentPeriod.start, endingBefore: window.currentPeriod.end,
+            bucketKind: bucketKind, dataInterval: window.currentData
+        )
+        let previous = try reportSummary(
+            for: periodKind, startingAt: window.previousPeriod.start, endingBefore: window.previousPeriod.end,
+            bucketKind: bucketKind, dataInterval: window.previousData
+        )
+        return ReportComparison(current: current, previous: previous, window: window)
+    }
+
     public func previousReportSummary(for periodKind: ReportPeriodKind, containing date: Date) throws -> ReportSummary {
         let interval = reportInterval(for: periodKind, containing: date)
         let previousDate: Date
@@ -1934,11 +1950,12 @@ public final class HagoStore {
         for periodKind: ReportPeriodKind,
         startingAt start: Date,
         endingBefore end: Date,
-        bucketKind: ReportBucketKind
+        bucketKind: ReportBucketKind,
+        dataInterval: DateInterval? = nil
     ) throws -> ReportSummary {
-        let interval = DateInterval(start: start, end: end)
-        let segments = ActivityAggregation.timeline(
-            from: try classifiedSegments(startingAt: start, endingBefore: end, includingOverlaps: true),
+        let interval = dataInterval ?? DateInterval(start: start, end: end)
+        let segments = interval.duration == 0 ? [] : ActivityAggregation.timeline(
+            from: try classifiedSegments(startingAt: interval.start, endingBefore: interval.end, includingOverlaps: true),
             in: interval
         )
         let totals = reportTotals(from: segments)
