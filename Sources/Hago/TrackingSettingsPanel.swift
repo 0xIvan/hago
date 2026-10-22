@@ -1,8 +1,11 @@
+import AppKit
 import ServiceManagement
 import SwiftUI
 
 struct TrackingSettingsPanel: View {
     @EnvironmentObject private var appState: AppState
+    @State private var hasChrome = false
+    @State private var requestedChromeAccess = false
 
     var body: some View {
         GroupBox("Tracking") {
@@ -22,6 +25,25 @@ struct TrackingSettingsPanel: View {
                 if let error = appState.loginItemError {
                     Text(error).foregroundStyle(.red)
                 }
+                if hasChrome {
+                    Divider()
+                    if appState.chromeAutomationGranted {
+                        Label("Chrome access allowed", systemImage: "checkmark.circle")
+                    } else {
+                        Text("Chrome time is not recorded until access is allowed. Other supported apps continue tracking.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Allow Chrome Access…") {
+                            requestedChromeAccess = true
+                            appState.requestChromeAccess()
+                        }
+                        .disabled(appState.chromePermissionRequestPending)
+                        if appState.chromePermissionRequestPending { ProgressView().controlSize(.small) }
+                        if requestedChromeAccess, let error = appState.errorMessage {
+                            Text(error).font(.caption).foregroundStyle(.red)
+                        }
+                    }
+                    Divider()
+                }
                 HStack {
                     Text(appState.currentStateLabel)
                     Spacer()
@@ -39,6 +61,9 @@ struct TrackingSettingsPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(6)
         }
-        .onAppear { appState.refreshLoginItemStatus() }
+        .onAppear {
+            appState.refreshLoginItemStatus()
+            hasChrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") != nil
+        }
     }
 }

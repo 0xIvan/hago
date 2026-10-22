@@ -71,11 +71,13 @@ struct OnboardingView: View {
             Group {
                 switch profileStore.profile.step {
                 case 0:
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Hago records computer activity locally. Reading and watching count without typing. Sleep, lock and pause stop recording; you can repair unattended unlocked time in Activity.")
-                        Text(appState.accessibilityTrusted ? "Window context access is available." : "App-level tracking works now. Grant Accessibility access to improve window recognition.")
-                        if !appState.accessibilityTrusted { Button("Grant Accessibility Access…") { appState.requestAccessibilityPermission() } }
-                        TrackingSettingsPanel()
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Hago records computer activity locally. Reading and watching count without typing. Sleep, lock and pause stop recording; you can repair unattended unlocked time in Activity.")
+                            Text(appState.accessibilityTrusted ? "Window context access is available." : "App-level tracking works now. Grant Accessibility access to improve window recognition.")
+                            if !appState.accessibilityTrusted { Button("Grant Accessibility Access…") { appState.requestAccessibilityPermission() } }
+                            TrackingSettingsPanel()
+                        }.frame(maxWidth: .infinity, alignment: .leading)
                     }
                 case 1: WorkProfileView()
                 case 2:
