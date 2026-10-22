@@ -147,7 +147,7 @@ struct ReportsView: View {
     private func periodTitle(_ report: ReportSummary) -> String {
         switch report.periodKind {
         case .week:
-            let endDate = report.endDate.addingTimeInterval(-1)
+            let endDate = HagoCalendar.shared.lastDayLabel(before: report.endDate)
             return "\(report.startDate.formatted(.dateTime.month(.abbreviated).day())) - \(endDate.formatted(.dateTime.month(.abbreviated).day().year()))"
         case .month:
             return report.startDate.formatted(.dateTime.month(.wide).year())
@@ -348,7 +348,7 @@ private struct ReportChartTooltip: View {
             return bucket.startDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
         }
 
-        let lastDay = Calendar.current.date(byAdding: .day, value: -1, to: bucket.endDate) ?? bucket.startDate
+        let lastDay = HagoCalendar.shared.lastDayLabel(before: bucket.endDate)
         return "\(bucket.startDate.formatted(.dateTime.month(.abbreviated).day())) – \(lastDay.formatted(.dateTime.month(.abbreviated).day()))"
     }
 

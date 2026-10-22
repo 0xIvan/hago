@@ -9,14 +9,17 @@ public struct HagoCalendar: Sendable {
 
     public init() {}
 
+    public func lastDayLabel(before end: Date, calendar: Calendar = .current) -> Date {
+        let lastDay = dayInterval(containing: end.addingTimeInterval(-1), calendar: calendar).start
+        return calendar.startOfDay(for: lastDay)
+    }
+
     public func dayInterval(containing date: Date, calendar: Calendar = .current) -> DateInterval {
         let localCalendar = calendar
 
         let localStartOfDate = localCalendar.startOfDay(for: date)
         let cutoff = localCalendar.date(
-            byAdding: .hour,
-            value: dayCutoffHour,
-            to: localStartOfDate
+            bySettingHour: dayCutoffHour, minute: 0, second: 0, of: localStartOfDate
         ) ?? localStartOfDate
 
         let start: Date
@@ -39,9 +42,7 @@ public struct HagoCalendar: Sendable {
             ?? localCalendar.startOfDay(for: currentDayStart)
 
         return localCalendar.date(
-            byAdding: .hour,
-            value: dayCutoffHour,
-            to: calendarWeekStart
+            bySettingHour: dayCutoffHour, minute: 0, second: 0, of: calendarWeekStart
         ) ?? calendarWeekStart
     }
 
@@ -58,16 +59,12 @@ public struct HagoCalendar: Sendable {
         let calendarMonthStart = localCalendar.dateInterval(of: .month, for: currentDayStart)?.start
             ?? localCalendar.startOfDay(for: currentDayStart)
         let start = localCalendar.date(
-            byAdding: .hour,
-            value: dayCutoffHour,
-            to: calendarMonthStart
+            bySettingHour: dayCutoffHour, minute: 0, second: 0, of: calendarMonthStart
         ) ?? calendarMonthStart
         let nextMonthStart = localCalendar.date(byAdding: .month, value: 1, to: calendarMonthStart)
             ?? calendarMonthStart
         let end = localCalendar.date(
-            byAdding: .hour,
-            value: dayCutoffHour,
-            to: nextMonthStart
+            bySettingHour: dayCutoffHour, minute: 0, second: 0, of: nextMonthStart
         ) ?? nextMonthStart
 
         return DateInterval(start: start, end: end)

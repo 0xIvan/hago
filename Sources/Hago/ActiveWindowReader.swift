@@ -29,6 +29,10 @@ struct ActiveWindowReader {
         let processIdentifier = application.processIdentifier
         let windowTitle = focusedWindowTitle(processIdentifier: processIdentifier)
         let chromeInfo = chromeTabInfo(bundleIdentifier: bundleIdentifier, appName: appName)
+        if (bundleIdentifier.lowercased().contains("chrome") || appName.lowercased().contains("chrome")), chromeInfo == nil {
+            // Without Chrome's mode response, a fallback title could belong to an incognito window.
+            return nil
+        }
 
         return ActivitySnapshot(
             appName: appName,
@@ -118,6 +122,7 @@ struct ActiveWindowReader {
         }
 
         let source = """
+        with timeout of 2 seconds
         tell application id "com.google.Chrome"
             if (count of windows) is 0 then return ""
             set windowMode to mode of front window as string
@@ -125,6 +130,7 @@ struct ActiveWindowReader {
             set activeTab to active tab of front window
             return windowMode & linefeed & (URL of activeTab) & linefeed & (title of activeTab)
         end tell
+        end timeout
         """
 
         var error: NSDictionary?

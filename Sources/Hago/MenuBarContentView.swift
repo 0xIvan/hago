@@ -17,6 +17,17 @@ struct MenuBarContentView: View {
             metrics
             currentActivity
 
+            if let message = appState.trackingErrorMessage {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            Button(appState.isTrackingPaused ? "Resume Tracking" : "Pause Tracking") {
+                appState.toggleTracking()
+            }
+            .controlSize(.small)
+
             if appState.reviewAISettings.scheduleEnabled,
                appState.reviewAIScheduleState.consecutiveFailures >= 3 {
                 Label("Scheduled Review needs attention. Check AI Harness settings.", systemImage: "exclamationmark.triangle.fill")

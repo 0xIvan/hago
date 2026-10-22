@@ -7,7 +7,22 @@ Hago is a local macOS menu bar app for tracking active-window time and reviewing
 - frontmost app name
 - active window title
 - Chrome active tab URL and title when Apple Events permission is granted
-- idle time, so inactive periods are not counted
+- reading and watching time, even without keyboard or mouse input
+
+Recording checkpoints are saved every five seconds while tracking. Quitting
+normally flushes the current interval. Sleep, display sleep, screen lock,
+switching away from the user session, and explicit pause stop recording. Long
+observation gaps are not counted as continuous activity. After a restart, Hago
+starts a new interval rather than extending the previous one across downtime.
+
+An unattended Mac that stays awake and unlocked can continue recording. In
+**Activity → Individual**, use an activity's clock button (**Edit Time**)
+to remove an entire interval, trim an edge, or remove a middle range. The
+remaining time retains its classification. Time removal is permanent.
+
+Use **Pause Tracking** in the menu bar panel or **Privacy → Tracking**. The same
+settings panel offers **Open at Login**, which is off unless the user enables
+it; Hago shows macOS approval requirements or registration errors.
 
 Chrome incognito windows are detected before tab URL/title collection and treated as private/ignored.
 
@@ -95,7 +110,10 @@ Hago may request:
 - Accessibility permission, used to read active window titles.
 - Automation/Apple Events permission for Chrome, used to read the active tab URL and title.
 
-Without those permissions, the app can still track app-level activity, but classification is less specific.
+Without Accessibility permission, app-level tracking remains available but
+classification is less specific. Chrome recording requires a successful
+Automation response: if Chrome's private-window status cannot be established,
+Hago skips that observation instead of storing a potentially private window title.
 
 Accessibility access is checked silently at startup and while tracking. If it is
 missing, use **Privacy → Accessibility → Grant Access**. Hago does not request

@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Foundation
 import HagoCore
+import ServiceManagement
 
 @MainActor
 final class AppState: ObservableObject {
@@ -31,7 +32,6 @@ final class AppState: ObservableObject {
     @Published var selectedSection: HagoSection = .overview
 
     private let reader = ActiveWindowReader()
-    private let idleMonitor = IdleMonitor()
     private let classifier = ActivityClassifier()
     private let rememberedRuleFactory = RememberedRuleFactory()
     private let reviewAISettingsStore: ReviewAISettingsStore
@@ -41,14 +41,19 @@ final class AppState: ObservableObject {
     private var reviewAIAnalysisService: ReviewAIAnalysisService?
     private var activeReviewIsScheduled = false
     private var timer: Timer?
-    private var activeDraft: ActiveDraft?
+    private var recorder = ActivityRecorder()
+    private var pendingCheckpoints: [UUID: ActivitySegment] = [:]
+    private var lifecycleObservers: [(NotificationCenter, NSObjectProtocol)] = []
+    private var suspensionReasons: Set<String> = []
+    @Published var isTrackingPaused = false
+    @Published var trackingErrorMessage: String?
+    @Published var loginItemStatus = SMAppService.mainApp.status
+    @Published var loginItemError: String?
     private var visibleAppWindows: Set<String> = []
     private var dashboardWindow: NSWindow?
     private var reviewAIRevision = 0
     private var reviewAIAnalysisTask: Task<Void, Never>?
     private let pollInterval: TimeInterval = 5
-    private let minimumSegmentDuration: TimeInterval = 3
-    private let idleThreshold: TimeInterval = 300
 
     init() {
         let settingsStore = ReviewAISettingsStore()
@@ -60,6 +65,9 @@ final class AppState: ObservableObject {
             let databaseURL = try HagoStore.defaultDatabaseURL()
             store = try HagoStore(databaseURL: databaseURL)
             if let store {
+                if let last = try store.recentSegments(limit: 1).first {
+                    recorder = ActivityRecorder(notBefore: last.segment.endedAt)
+                }
                 reviewAIAnalysisService = ReviewAIAnalysisService(store: store)
                 reviewAIScheduleState = try store.loadReviewAIScheduleState()
                 if reviewAIScheduleState.outcome == .running {
@@ -79,6 +87,7 @@ final class AppState: ObservableObject {
             // Launches and tracking polls only check access; the user starts permission requests.
             try refresh()
             refreshReviewAIHarnesses()
+            observeLifecycle()
             startTracking()
             DispatchQueue.main.async { [weak self] in
                 self?.hideFromDockIfNoWindowsAreOpen()
@@ -238,6 +247,7 @@ final class AppState: ObservableObject {
     }
 
     func saveRule(_ rule: Rule, reclassify scope: ReclassificationScope?) {
+        guard flushTracking() else { return }
         do {
             try store?.saveRule(rule)
             if let scope {
@@ -624,6 +634,7 @@ final class AppState: ObservableObject {
     }
 
     func classifyReviewGroup(_ group: AggregatedActivity, as kind: ActivityKind) {
+        guard flushTracking() else { return }
         guard let segment = reviewSegments.first(where: { group.segmentIDs.contains($0.id) }) else { return }
         let categoryID = categories.first { $0.kind == kind }?.id
 
@@ -645,6 +656,7 @@ final class AppState: ObservableObject {
     }
 
     func updateSegmentClassification(_ segment: ClassifiedSegment, as kind: ActivityKind) {
+        guard flushTracking() else { return }
         guard kind != .review else {
             return
         }
@@ -700,103 +712,171 @@ final class AppState: ObservableObject {
         NSApp.setActivationPolicy(.accessory)
     }
 
+    func refreshLoginItemStatus() {
+        loginItemStatus = SMAppService.mainApp.status
+    }
+
+    func setOpenAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            loginItemError = nil
+        } catch {
+            loginItemError = error.localizedDescription
+        }
+        refreshLoginItemStatus()
+    }
+
+    func openLoginItemSettings() {
+        SMAppService.openSystemSettingsLoginItems()
+    }
+
+    func toggleTracking() {
+        isTrackingPaused.toggle()
+        tick()
+    }
+
+    @discardableResult
+    func flushTracking() -> Bool {
+        enqueue(recorder.observe(nil, at: Date(), uptime: ProcessInfo.processInfo.systemUptime))
+        return persistCheckpoints()
+    }
+
+    @discardableResult
+    func stopTracking() -> Bool {
+        timer?.invalidate()
+        timer = nil
+        for (center, token) in lifecycleObservers { center.removeObserver(token) }
+        lifecycleObservers.removeAll()
+        return flushTracking()
+    }
+
+    func removeActivityTime(_ item: ClassifiedSegment, from start: Date, to end: Date) -> Bool {
+        guard flushTracking() else { return false }
+        do {
+            try store?.removeTime(segmentID: item.id, from: start, to: end)
+            try refresh()
+            clearReviewAISuggestions()
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func observeLifecycle() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        for (name, reason, suspended) in [
+            (NSWorkspace.willSleepNotification, "sleep", true),
+            (NSWorkspace.didWakeNotification, "sleep", false),
+            (NSWorkspace.screensDidSleepNotification, "display", true),
+            (NSWorkspace.screensDidWakeNotification, "display", false),
+            (NSWorkspace.sessionDidResignActiveNotification, "session", true),
+            (NSWorkspace.sessionDidBecomeActiveNotification, "session", false),
+            (NSWorkspace.willPowerOffNotification, "shutdown", true)
+        ] {
+            let token = workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.setSuspended(reason, suspended: suspended)
+                }
+            }
+            lifecycleObservers.append((workspace, token))
+        }
+        let distributed = DistributedNotificationCenter.default()
+        for (name, suspended) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
+            let token = distributed.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.setSuspended("lock", suspended: suspended)
+                }
+            }
+            lifecycleObservers.append((distributed, token))
+        }
+    }
+
+    private func setSuspended(_ reason: String, suspended: Bool) {
+        if suspended {
+            suspensionReasons.insert(reason)
+            flushTracking()
+        } else {
+            suspensionReasons.remove(reason)
+        }
+        tick()
+    }
+
     private func startTracking() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.tick()
-            }
+        let timer = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
         }
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
         tick()
     }
 
     private func tick() {
         accessibilityTrusted = reader.accessibilityIsTrusted()
-        checkScheduledReview()
-
+        refreshLoginItemStatus()
         let now = Date()
-        if todaySummary.date != HagoCalendar.shared.dayInterval(containing: now).start {
-            do {
-                try refresh()
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
-        let idleSeconds = idleMonitor.secondsSinceLastInput()
-        if idleSeconds >= idleThreshold {
-            finalizeActiveDraft(endingAt: now.addingTimeInterval(-idleSeconds))
-            activeDraft = nil
+        if isTrackingPaused || !suspensionReasons.isEmpty {
+            enqueue(recorder.observe(nil, at: now, uptime: ProcessInfo.processInfo.systemUptime))
+            persistCheckpoints()
             currentSnapshot = nil
             currentClassification = nil
-            currentStateLabel = "Idle"
+            currentStateLabel = isTrackingPaused ? "Paused" : "Suspended"
             return
         }
-
-        guard let snapshot = reader.currentSnapshot() else {
-            finalizeActiveDraft(endingAt: now)
-            activeDraft = nil
-            currentSnapshot = nil
-            currentClassification = nil
-            currentStateLabel = "No active window"
-            return
-        }
-
-        let result = classifier.classify(snapshot: snapshot, rules: rules)
-        currentClassification = result
-
-        if result.kind == .ignored {
-            finalizeActiveDraft(endingAt: now)
-            activeDraft = nil
-            currentSnapshot = nil
-            currentStateLabel = "Ignored"
-            return
-        }
-
-        currentSnapshot = snapshot
-        currentStateLabel = result.kind.displayName
-
-        guard let activeDraft else {
-            self.activeDraft = ActiveDraft(snapshot: snapshot, startedAt: now)
-            return
-        }
-
-        if activeDraft.snapshot.normalizedSignature != snapshot.normalizedSignature {
-            finalizeActiveDraft(endingAt: now)
-            self.activeDraft = ActiveDraft(snapshot: snapshot, startedAt: now)
-        }
+        checkScheduledReview()
+        let snapshot = reader.currentSnapshot()
+        let classification = snapshot.map { classifier.classify(snapshot: $0, rules: rules) }
+        let retained = classification?.kind == .ignored ? nil : snapshot
+        let contextChanged = recorder.current?.snapshot.normalizedSignature != retained?.normalizedSignature
+        currentSnapshot = retained
+        currentClassification = classification
+        enqueue(recorder.observe(retained, at: now, uptime: ProcessInfo.processInfo.systemUptime))
+        let saved = persistCheckpoints()
+        if saved && contextChanged { reload() }
+        currentStateLabel = saved
+            ? (classification?.kind.displayName ?? "Window context unavailable")
+            : "Storage error"
     }
 
-    private func finalizeActiveDraft(endingAt endedAt: Date) {
-        guard let activeDraft else {
-            return
-        }
+    private func enqueue(_ checkpoints: [ActivitySegment]) {
+        for segment in checkpoints { pendingCheckpoints[segment.id] = segment }
+    }
 
-        let segment = ActivitySegment(
-            startedAt: activeDraft.startedAt,
-            endedAt: endedAt,
-            snapshot: activeDraft.snapshot
-        )
-
-        guard segment.duration >= minimumSegmentDuration else {
-            return
-        }
-
-        let result = classifier.classify(snapshot: activeDraft.snapshot, rules: rules)
-        let classification = SegmentClassification(
-            segmentID: segment.id,
-            kind: result.kind,
-            categoryID: result.categoryID,
-            projectID: result.projectID,
-            ruleID: result.ruleID,
-            isManual: false
-        )
-
+    @discardableResult
+    private func persistCheckpoints() -> Bool {
         do {
-            try store?.save(segment: segment, classification: classification)
-            try refresh()
-            errorMessage = nil
+            guard let store else { throw HagoStoreError.missingDatabase }
+            for segment in pendingCheckpoints.values.sorted(by: { $0.startedAt < $1.startedAt }) {
+                let result = classifier.classify(snapshot: segment.snapshot, rules: rules)
+                if result.kind != .ignored {
+                    try store.checkpoint(segment: segment, classification: SegmentClassification(
+                        segmentID: segment.id, kind: result.kind, categoryID: result.categoryID,
+                        projectID: result.projectID, ruleID: result.ruleID, isManual: false
+                    ))
+                }
+                pendingCheckpoints.removeValue(forKey: segment.id)
+            }
+            todaySummary = try store.daySummary(for: Date())
+            if !visibleAppWindows.isEmpty {
+                todayTimeline = try store.dayTimeline(for: Date())
+                if selectedSection == .activity {
+                    activitySegments = try store.activitySegments(for: activityDate)
+                }
+                if selectedSection == .review {
+                    reviewSegments = try store.reviewSegments()
+                }
+            }
+            trackingErrorMessage = nil
+            return true
         } catch {
-            errorMessage = error.localizedDescription
+            trackingErrorMessage = "Time could not be saved. Hago will retry: \(error.localizedDescription)"
+            return false
         }
     }
 }
@@ -806,9 +886,4 @@ enum ReviewAIAnalysisState: Equatable {
     case analyzing
     case completed
     case failed(String)
-}
-
-private struct ActiveDraft {
-    var snapshot: ActivitySnapshot
-    var startedAt: Date
 }

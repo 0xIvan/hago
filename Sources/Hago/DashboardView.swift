@@ -18,6 +18,7 @@ struct DashboardView: View {
                 .navigationTitle(appState.selectedSection.title)
         }
         .background(WindowLifecycleView(id: "dashboard"))
+        .onChange(of: appState.selectedSection) { _, _ in appState.reload() }
     }
 
     @ViewBuilder
@@ -584,6 +585,7 @@ private struct RecentActivityTab: View {
     @State private var sort = ActivitySort.newest
     @State private var presentation = ActivityPresentation.grouped
     @State private var ruleInspection: ActivityRuleInspection?
+    @State private var timeEditing: ClassifiedSegment?
 
     private let formatter = TimeFormatting()
 
@@ -622,6 +624,9 @@ private struct RecentActivityTab: View {
         .sheet(item: $ruleInspection) { inspection in
             ActivityRuleInspectorView(inspection: inspection)
                 .environmentObject(appState)
+        }
+        .sheet(item: $timeEditing) { item in
+            ActivityTimeEditor(item: item).environmentObject(appState)
         }
         .onAppear {
             appState.selectActivityDate(HagoCalendar.shared.dayInterval(containing: Date()).start)
@@ -708,6 +713,14 @@ private struct RecentActivityTab: View {
                 .font(.subheadline.monospacedDigit())
 
             Button {
+                timeEditing = item
+            } label: {
+                Label("Edit Time", systemImage: "clock")
+            }
+            .labelStyle(.iconOnly)
+            .help("Remove unattended time")
+
+            Button {
                 ruleInspection = ActivityRuleInspection(
                     id: item.id.uuidString,
                     title: activityName(for: item),
@@ -746,6 +759,7 @@ private struct RecentActivityTab: View {
             .menuStyle(.button)
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
     }
 
     private var emptyActivityMessage: String {

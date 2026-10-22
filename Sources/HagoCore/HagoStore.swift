@@ -141,6 +141,50 @@ public final class HagoStore {
             return
         }
 
+        try transaction {
+            try insertSegment(segment, classification: classification)
+        }
+    }
+
+    public func checkpoint(segment: ActivitySegment, classification: SegmentClassification) throws {
+        guard classification.kind != .ignored else { return }
+        try transaction {
+            if try loadClassification(segmentID: segment.id) != nil {
+                try execute(
+                    "UPDATE activity_segments SET ended_at = MAX(ended_at, ?) WHERE id = ?",
+                    bindings: [.double(segment.endedAt.timeIntervalSince1970), .text(segment.id.uuidString)]
+                )
+            } else {
+                try insertSegment(segment, classification: classification)
+            }
+        }
+    }
+
+    public func removeTime(segmentID: UUID, from start: Date, to end: Date) throws {
+        try transaction {
+            let segments = try query(
+                "SELECT id, started_at, ended_at, app_name, bundle_id, process_id, window_title, url, source FROM activity_segments WHERE id = ?",
+                bindings: [.text(segmentID.uuidString)], map: activitySegmentColumn
+            )
+            guard let segment = segments.first,
+                  let classification = try loadClassification(segmentID: segmentID),
+                  start >= segment.startedAt, end <= segment.endedAt, start < end else {
+                throw HagoStoreError.failedToStep("Choose a non-empty range inside the recorded interval. Reload if it has changed.")
+            }
+            try deleteSegment(id: segmentID)
+            for (lower, upper) in [(segment.startedAt, start), (end, segment.endedAt)] where lower < upper {
+                let remainder = ActivitySegment(startedAt: lower, endedAt: upper, snapshot: segment.snapshot)
+                let retained = SegmentClassification(
+                    segmentID: remainder.id, kind: classification.kind,
+                    categoryID: classification.categoryID, projectID: classification.projectID,
+                    ruleID: classification.ruleID, isManual: classification.isManual
+                )
+                try insertSegment(remainder, classification: retained)
+            }
+        }
+    }
+
+    private func insertSegment(_ segment: ActivitySegment, classification: SegmentClassification) throws {
         try execute(
             """
             INSERT OR REPLACE INTO activity_segments (

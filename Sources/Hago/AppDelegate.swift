@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        appState.stopTracking()
         appearanceObservation?.invalidate()
     }
 
@@ -22,13 +23,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let alert = NSAlert()
-        alert.messageText = "Quit Hago?"
-        alert.informativeText = "Are you sure you want to close the app?"
+        if appState.flushTracking() { return .terminateNow }
+        alert.messageText = "Some tracked time has not been saved"
+        alert.informativeText = "Keep Hago open to retry saving, or quit and lose the unsaved time."
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Keep Open")
+        alert.addButton(withTitle: "Quit Anyway")
 
-        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
     }
 
     private func observeAppearance() {
