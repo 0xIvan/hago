@@ -32,6 +32,7 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var accessibilityTrusted = false
     @Published var selectedSection: HagoSection = .overview
+    @Published var selectedSettingsSection: HagoSection = .profile
 
     private let reader = ActiveWindowReader()
     private let classifier = ActivityClassifier()
@@ -189,6 +190,12 @@ final class AppState: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func prepareSettings(section: HagoSection) {
+        guard HagoSection.settingsSections.contains(section) else { return }
+        selectedSettingsSection = section
+        prepareToOpenAppWindow()
+    }
+
     func openDashboardWindow() {
         openHagoWindow(section: .overview)
     }
@@ -252,7 +259,6 @@ final class AppState: ObservableObject {
             return Rule(id: id, name: "Work Profile: " + condition.value, priority: 150, enabled: true, isBuiltIn: false,
                         action: RuleAction(kind: .work, categoryID: categories.first { $0.kind == .work }?.id, projectID: nil), conditions: [condition], origin: .user)
         }
-        for (identity, id) in updatedProfile.ruleIDs { profile.ruleIDs[identity] = id }
         try store.applyWorkProfile(presetIDs: profile.presetIDs, rules: profileRules, removingRuleIDs: removedIDs)
         profile = updatedProfile
         try refresh()

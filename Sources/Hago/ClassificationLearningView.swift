@@ -49,7 +49,7 @@ struct RememberRulePreviewView: View {
             }
             if let preview {
                 Text("Applies to \(preview.affectedCount) historical recordings (\(TimeFormatting().compactDuration(preview.affectedSeconds))).")
-                Text("Explicit corrections and project assignments stay unchanged. Conflicting rules remain Needs Review.")
+                Text("Explicit corrections and project assignments stay unchanged. Conflicting rules remain Needs review.")
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(Array(preview.examples.enumerated()), id: \.offset) { _, example in
                     Text(example).font(.caption).lineLimit(2)

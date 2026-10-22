@@ -36,9 +36,13 @@ struct HagoSettingsView: View {
         .frame(minWidth: 850, minHeight: 650)
         .background(WindowLifecycleView(id: "settings"))
         .onAppear {
-            if HagoSection.settingsSections.contains(appState.selectedSection) { selection = appState.selectedSection }
+            appState.prepareToOpenAppWindow()
+            if HagoSection.settingsSections.contains(appState.selectedSettingsSection) { selection = appState.selectedSettingsSection }
         }
-        .onChange(of: appState.selectedSection) { _, section in
+        .onChange(of: selection) { _, section in
+            if let section { appState.selectedSettingsSection = section }
+        }
+        .onChange(of: appState.selectedSettingsSection) { _, section in
             if HagoSection.settingsSections.contains(section) { selection = section }
         }
     }

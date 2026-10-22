@@ -34,7 +34,7 @@ struct MenuBarContentView: View {
 
             if appState.reviewAISettings.scheduleEnabled,
                appState.reviewAIScheduleState.consecutiveFailures >= 3 {
-                Label("Scheduled Review needs attention. Check AI Suggestions settings.", systemImage: "exclamationmark.triangle.fill")
+                Label("Scheduled Review needs attention. Check AI suggestions settings.", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }

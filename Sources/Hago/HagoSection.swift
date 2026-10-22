@@ -29,9 +29,9 @@ enum HagoSection: String, CaseIterable, Identifiable, Hashable {
         case .reports:
             "Reports"
         case .review:
-            "Needs Review"
+            "Needs review"
         case .aiReview:
-            "AI Suggestions"
+            "AI suggestions"
         case .activity:
             "Activity"
         case .rules:

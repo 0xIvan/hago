@@ -5,7 +5,6 @@ import HagoCore
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var profileStore: WorkProfileStore
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         NavigationSplitView {
@@ -23,10 +22,7 @@ struct DashboardView: View {
         .sheet(isPresented: $profileStore.needsSetup) {
             OnboardingView().environmentObject(appState).environmentObject(profileStore)
         }
-        .onChange(of: appState.selectedSection) { _, section in
-            appState.reload()
-            if HagoSection.settingsSections.contains(section) { openSettings() }
-        }
+        .onChange(of: appState.selectedSection) { _, _ in appState.reload() }
     }
 
     @ViewBuilder
@@ -108,6 +104,7 @@ private struct OverviewTab: View {
 
 private struct ReviewTab: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.openSettings) private var openSettings
     @State private var inspectingRun: ReviewAIRunSummary?
     @State private var rememberingRule: Rule?
     @State private var selectedGroupID: String?
@@ -167,7 +164,8 @@ private struct ReviewTab: View {
                 Spacer()
 
                 Button {
-                    appState.selectedSection = .aiReview
+                    appState.prepareSettings(section: .aiReview)
+                    openSettings()
                 } label: {
                     Label(
                         appState.reviewAISettings.selectedHarness.displayName,
@@ -248,7 +246,7 @@ private struct ReviewTab: View {
     }
 
     private var reviewItemsSection: some View {
-        Section("Needs Review · Select a row, then W / P / I") {
+        Section("Needs review · Select a row, then W / P / I") {
             if appState.reviewSegments.isEmpty {
                 ContentUnavailableView(
                     "All caught up",
@@ -1109,7 +1107,7 @@ private enum ActivityKindFilter: String, CaseIterable, Identifiable {
         case .personal:
             "Personal"
         case .review:
-            "Needs Review"
+            "Needs review"
         }
     }
 

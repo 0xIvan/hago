@@ -318,7 +318,7 @@ private enum RuleKindFilter: String, CaseIterable, Identifiable {
         case .personal:
             "Personal"
         case .review:
-            "Needs Review"
+            "Needs review"
         case .ignored:
             "Ignored"
         }

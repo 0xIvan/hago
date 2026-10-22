@@ -83,7 +83,7 @@ struct OnboardingView: View {
                         Text("AI is optional").font(.title2)
                         Text("Local presets and corrections work without AI. You can connect your preferred provider and model in AI settings. You choose what context is shared and provider usage may cost money.")
                         Button("Open AI Connection Settings…") {
-                            appState.selectedSection = .aiReview
+                            appState.prepareSettings(section: .aiReview)
                             openSettings()
                         }
                         Text("Continue to use local classification without connecting a provider.").foregroundStyle(.secondary)
@@ -91,7 +91,7 @@ struct OnboardingView: View {
                 default:
                     VStack(alignment: .leading, spacing: 16) {
                         Text("You’re ready").font(.title2)
-                        Text("Hago is tracking as capture permits. Unknown activity stays in Needs Review. Correct an activity to fix it, and choose Remember when you want a reusable rule.")
+                        Text("Hago is tracking as capture permits. Unknown activity stays in Needs review. Correct an activity to fix it, and choose Remember when you want a reusable rule.")
                         Text("Your profile is editable in Settings → Work Profile. Review covers your full history.").foregroundStyle(.secondary)
                     }
                 }

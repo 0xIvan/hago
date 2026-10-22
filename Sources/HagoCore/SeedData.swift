@@ -9,7 +9,7 @@ public enum SeedData {
         [
             Category(id: workCategoryID, name: "Work", kind: .work, colorHex: "#2563EB"),
             Category(id: personalCategoryID, name: "Personal", kind: .personal, colorHex: "#16A34A"),
-            Category(id: reviewCategoryID, name: "Needs Review", kind: .review, colorHex: "#D97706")
+            Category(id: reviewCategoryID, name: "Needs review", kind: .review, colorHex: "#D97706")
         ]
     }
 

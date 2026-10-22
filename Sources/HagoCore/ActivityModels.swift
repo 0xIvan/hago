@@ -17,7 +17,7 @@ public enum ActivityKind: String, CaseIterable, Codable, Identifiable, Sendable 
         case .personal:
             "Personal"
         case .review:
-            "Needs Review"
+            "Needs review"
         case .ignored:
             "Ignored"
         }
