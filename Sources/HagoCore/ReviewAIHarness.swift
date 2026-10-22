@@ -2,6 +2,8 @@ import Darwin
 import Foundation
 
 public enum ReviewAIHarnessKind: String, CaseIterable, Codable, Identifiable, Sendable {
+    case anthropic
+    case openAI
     case codex
     case claudeCode
     case pi
@@ -13,6 +15,10 @@ public enum ReviewAIHarnessKind: String, CaseIterable, Codable, Identifiable, Se
 
     public var displayName: String {
         switch self {
+        case .anthropic:
+            "Anthropic"
+        case .openAI:
+            "OpenAI"
         case .codex:
             "Codex"
         case .claudeCode:
@@ -24,6 +30,10 @@ public enum ReviewAIHarnessKind: String, CaseIterable, Codable, Identifiable, Se
         }
     }
 
+    public var isDirectProvider: Bool {
+        self == .anthropic || self == .openAI
+    }
+
     var commandName: String? {
         switch self {
         case .codex:
@@ -32,7 +42,7 @@ public enum ReviewAIHarnessKind: String, CaseIterable, Codable, Identifiable, Se
             "claude"
         case .pi:
             "pi"
-        case .disabled:
+        case .disabled, .anthropic, .openAI:
             nil
         }
     }
@@ -111,6 +121,8 @@ public struct ReviewAISettings: Equatable, Codable, Sendable {
     public var scheduleInterval: ReviewAIScheduleInterval
     public var automaticallyApplyScheduledReviews: Bool
     public var profession: ReviewAIProfession
+    public var directDisclosureVersion: Int
+    public var shareRedactedTitles: Bool
 
     public init(
         selectedHarness: ReviewAIHarnessKind = .codex,
@@ -134,6 +146,8 @@ public struct ReviewAISettings: Equatable, Codable, Sendable {
         self.scheduleInterval = scheduleInterval
         self.automaticallyApplyScheduledReviews = automaticallyApplyScheduledReviews
         self.profession = profession
+        self.directDisclosureVersion = 0
+        self.shareRedactedTitles = false
     }
 
     public func customBinaryPath(for harness: ReviewAIHarnessKind) -> String? {
@@ -168,6 +182,8 @@ public struct ReviewAISettings: Equatable, Codable, Sendable {
         case scheduleInterval
         case automaticallyApplyScheduledReviews
         case profession
+        case directDisclosureVersion
+        case shareRedactedTitles
     }
 
     private enum LegacyCodingKeys: String, CodingKey {
@@ -176,6 +192,8 @@ public struct ReviewAISettings: Equatable, Codable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        directDisclosureVersion = try container.decodeIfPresent(Int.self, forKey: .directDisclosureVersion) ?? 0
+        shareRedactedTitles = try container.decodeIfPresent(Bool.self, forKey: .shareRedactedTitles) ?? false
         selectedHarness = try container.decodeIfPresent(ReviewAIHarnessKind.self, forKey: .selectedHarness) ?? .codex
         automaticallyApplyHighConfidence = try container.decodeIfPresent(
             Bool.self,
@@ -522,7 +540,7 @@ public struct ReviewAIHarnessDiscovery: Sendable {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) async -> [ReviewAIHarnessStatus] {
         let repairedEnvironment = await repairedEnvironment(from: environment)
-        let harnesses = ReviewAIHarnessKind.allCases.filter { $0 != .disabled }
+        let harnesses = ReviewAIHarnessKind.allCases.filter { $0 != .disabled && !$0.isDirectProvider }
 
         return await withTaskGroup(of: ReviewAIHarnessStatus.self) { group in
             for harness in harnesses {
@@ -971,7 +989,7 @@ public struct CLIReviewAISuggestionProvider: ReviewAISuggestionProviding {
                 arguments.append(contentsOf: ["--thinking", reasoningEffort.rawValue])
             }
             return arguments
-        case .disabled:
+        case .disabled, .anthropic, .openAI:
             return []
         }
     }

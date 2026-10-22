@@ -61,17 +61,17 @@ Hago applies at most 10 such rules per run, records an audit entry, and provides
 Undo. Ignored, Unsure, low-confidence, stale, and unsafe results remain for
 manual review.
 
-Install and sign in to at least one supported CLI, then select it under
-**AI Harness** in Hago. A custom executable path is available for CLIs that are
+For a CLI connection, install and sign in to a supported CLI, then select it under
+**AI suggestions** in Hago. A custom executable path is available for CLIs that are
 not on the login-shell `PATH`. Hago lists models reported by Codex and Pi, and
 uses stable current-model aliases for Claude Code. The settings show a
 recommended model and the reasoning levels supported by that model. Users can
 also enter a custom model ID or keep the CLI default.
 
 Review analysis can be stopped from the Review screen. Stopping terminates the
-active CLI process and does not apply incomplete output.
+active CLI process or direct HTTP request and does not apply incomplete output.
 
-Choose **AI Harness → Profession** to set your professional role. The selected
+Choose **AI suggestions → Profession** to set your professional role. The selected
 profession informs manual and scheduled analysis through internal guidance;
 only the selector is shown in the interface. Changing the profession makes
 saved recommendations eligible for a new analysis. Existing rules and manual
@@ -79,7 +79,7 @@ classifications are not rewritten.
 
 ### Scheduled Review
 
-Enable **AI Harness → Scheduled Review** to run every two hours while Hago is
+Enable **AI suggestions → Scheduled Review** to run every two hours while Hago is
 open and the Mac is awake. The interval can be one, two, four, or 24 hours.
 After sleep, Hago makes one catch-up run if due; it does not replay missed
 intervals. On launch, an overdue run waits one interval before running. An
@@ -92,7 +92,7 @@ choices, project assignments, and classified activity are protected. Rule
 consolidation remains a separate manual action.
 
 Each run first checks existing rule coverage, then analyzes up to 50 new or
-changed Review groups. Recommendations and evidence fingerprints are saved
+changed Review groups for CLI connections, or 20 for direct providers. Recommendations and evidence fingerprints are saved
 locally. Counts and elapsed time alone do not cause another AI call. Changed
 sample evidence, related rules, model, or reasoning can cause a new analysis.
 Enabling automatic application rechecks saved advice without another AI call.
@@ -203,3 +203,28 @@ The app ships with editable default categories and rules for common work, person
 ## License
 
 MIT
+
+### Optional direct AI providers
+
+AI suggestions supports Anthropic and OpenAI without installing a CLI. Choose a
+provider, save your own API key in macOS Keychain, and explicitly accept the data
+disclosure before analysis. Provider API usage is billed separately; Hago never
+retries against another model or provider automatically. Disconnect removes the
+selected provider key and disables sharing and scheduling. Existing CLI choices,
+consent, and schedules are preserved. Model/reasoning controls live under Advanced.
+
+Starting models verified against official documentation on 2026-10-22:
+[Claude Haiku 5.5](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide)
+and [GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra).
+These are starting recommendations, not a measured Hago accuracy benchmark.
+Custom model IDs must support the selected provider's text/JSON API.
+
+Direct requests include at most 20 Review groups with 3 samples per group.
+App identities, domains, group counts/minutes, profession and relevant rule
+labels/values are sent; full URLs and original group IDs are not. Window titles
+are withheld by default. Optional titles are shortened and common secret patterns
+are redacted, but can still contain sensitive text; inspect the disclosure before
+enabling them. Free-text profile answers are not shared. Responses are bounded,
+validated, audited and applied through the existing opt-in/undo flow. Tracking
+continues locally on provider failures. No live paid API call was used to verify
+this implementation; transport fixtures cover privacy and failure handling.

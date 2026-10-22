@@ -19,6 +19,8 @@ public struct ReviewAIModelCatalog: Sendable {
             return Self.claudeModels
         case .pi:
             return await piModels(executablePath: executablePath, environment: environment)
+        case .anthropic, .openAI:
+            return ReviewAIDirectCatalog.models(for: harness)
         case .disabled:
             return []
         }

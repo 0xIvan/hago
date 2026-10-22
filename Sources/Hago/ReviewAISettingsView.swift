@@ -8,14 +8,16 @@ struct ReviewAISettingsView: View {
 
     var body: some View {
         Form {
-            Section("Harness") {
-                Picker("Local AI CLI", selection: selectedHarnessBinding) {
+            Section("AI suggestions") {
+                Picker("Connection", selection: selectedHarnessBinding) {
                     ForEach(ReviewAIHarnessKind.allCases) { harness in
                         Text(harness.displayName).tag(harness)
                     }
                 }
 
-                if selectedHarness != .disabled {
+                if selectedHarness.isDirectProvider {
+                    DirectAIConnectionView(showsProviderPicker: false)
+                } else if selectedHarness != .disabled {
                     harnessStatus
                     privacyConfirmation
                 }
@@ -30,10 +32,13 @@ struct ReviewAISettingsView: View {
 
             if selectedHarness != .disabled {
                 Section("Profession") {
-                    Picker("Profession", selection: Binding(
-                        get: { appState.reviewAISettings.profession },
-                        set: { appState.setReviewAIProfession($0) }
-                    )) {
+                    Picker(
+                        "Profession",
+                        selection: Binding(
+                            get: { appState.reviewAISettings.profession },
+                            set: { appState.setReviewAIProfession($0) }
+                        )
+                    ) {
                         ForEach(ReviewAIProfession.allCases) { profession in
                             Text(profession.displayName).tag(profession)
                         }
@@ -44,49 +49,57 @@ struct ReviewAISettingsView: View {
                 }
                 .environment(\.layoutDirection, .leftToRight)
 
-                Section("Model and Reasoning") {
-                    Picker("Model", selection: selectedModelBinding) {
-                        Text("CLI Default").tag("")
-                        ForEach(appState.availableReviewAIModels) { model in
-                            Text(model.isRecommended ? "\(model.displayName) — Recommended" : model.displayName)
-                                .tag(model.modelID)
-                        }
-                        if let selectedModelID = appState.reviewAISettings.selectedModel(for: selectedHarness),
-                           !appState.availableReviewAIModels.contains(where: { $0.modelID == selectedModelID }) {
-                            Text("Custom: \(selectedModelID)").tag(selectedModelID)
-                        }
-                    }
+                if !selectedHarness.isDirectProvider {
+                    Section {
+                        DisclosureGroup("Advanced model and reasoning") {
+                            Picker("Model", selection: selectedModelBinding) {
+                                Text("CLI Default").tag("")
+                                ForEach(appState.availableReviewAIModels) { model in
+                                    Text(model.isRecommended ? "\(model.displayName) — Recommended" : model.displayName)
+                                        .tag(model.modelID)
+                                }
+                                if let selectedModelID = appState.reviewAISettings.selectedModel(for: selectedHarness),
+                                    !appState.availableReviewAIModels.contains(where: { $0.modelID == selectedModelID })
+                                {
+                                    Text("Custom: \(selectedModelID)").tag(selectedModelID)
+                                }
+                            }
 
-                    if let recommendedModel = appState.availableReviewAIModels.first(where: \.isRecommended) {
-                        Text("Recommended model: \(recommendedModel.displayName)")
+                            if let recommendedModel = appState.availableReviewAIModels.first(where: \.isRecommended) {
+                                Text("Recommended model: \(recommendedModel.displayName)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Picker("Reasoning", selection: selectedReasoningBinding) {
+                                Text("CLI Default").tag("")
+                                ForEach(appState.availableReviewAIReasoningEfforts) { effort in
+                                    Text(
+                                        effort == appState.recommendedReviewAIReasoningEffort
+                                            ? "\(effort.displayName) — Recommended"
+                                            : effort.displayName
+                                    )
+                                    .tag(effort.rawValue)
+                                }
+                            }
+
+                            HStack {
+                                TextField("Custom model ID", text: $customModelID)
+                                    .textFieldStyle(.roundedBorder)
+                                Button("Use Model") {
+                                    appState.setReviewAIModel(customModelID)
+                                }
+                                .disabled(customModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+
+                            Text(
+                                "CLI Default follows the connection configuration. A selected model and reasoning level apply only to Review analysis."
+                            )
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                    }
-
-                    Picker("Reasoning", selection: selectedReasoningBinding) {
-                        Text("CLI Default").tag("")
-                        ForEach(appState.availableReviewAIReasoningEfforts) { effort in
-                            Text(
-                                effort == appState.recommendedReviewAIReasoningEffort
-                                    ? "\(effort.displayName) — Recommended"
-                                    : effort.displayName
-                            )
-                            .tag(effort.rawValue)
                         }
-                    }
 
-                    HStack {
-                        TextField("Custom model ID", text: $customModelID)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Use Model") {
-                            appState.setReviewAIModel(customModelID)
-                        }
-                        .disabled(customModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-
-                    Text("CLI Default follows the harness configuration. A selected model and reasoning level apply only to Review analysis.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section("Manual Analysis") {
@@ -96,27 +109,31 @@ struct ReviewAISettingsView: View {
                     )
                     .disabled(!appState.selectedReviewAIHarnessIsConfirmed)
 
-                    Text("Hago applies at most 10 Work or Personal rules per analysis. Other suggestions remain ready for review.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "Hago applies at most 10 Work or Personal rules per analysis. Other suggestions remain ready for review."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
                 scheduleSettings
 
-                Section("Advanced") {
-                    HStack {
-                        TextField("Custom executable path", text: $customBinaryPath)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Save Path") {
-                            appState.setReviewAICustomBinaryPath(customBinaryPath, for: selectedHarness)
+                if !selectedHarness.isDirectProvider {
+                    Section("Advanced CLI connection") {
+                        HStack {
+                            TextField("Custom executable path", text: $customBinaryPath)
+                                .textFieldStyle(.roundedBorder)
+                            Button("Save Path") {
+                                appState.setReviewAICustomBinaryPath(customBinaryPath, for: selectedHarness)
+                            }
                         }
+                        Text("Leave this empty to use the executable found in your login shell PATH.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    Text("Leave this empty to use the executable found in your login shell PATH.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-            }
 
+            }
             Section("Installed CLIs") {
                 ForEach(appState.reviewAIHarnessStatuses) { status in
                     HStack(alignment: .top, spacing: 10) {
@@ -161,30 +178,41 @@ struct ReviewAISettingsView: View {
     @ViewBuilder
     private var scheduleSettings: some View {
         Section("Scheduled Review") {
-            Toggle("Enable scheduled review", isOn: Binding(
-                get: { appState.reviewAISettings.scheduleEnabled },
-                set: { appState.setReviewAIScheduleEnabled($0) }
-            ))
+            Toggle(
+                "Enable scheduled review",
+                isOn: Binding(
+                    get: { appState.reviewAISettings.scheduleEnabled },
+                    set: { appState.setReviewAIScheduleEnabled($0) }
+                )
+            )
             .disabled(!appState.selectedReviewAIHarnessIsConfirmed && !appState.reviewAISettings.scheduleEnabled)
 
-            Picker("Run frequency", selection: Binding(
-                get: { appState.reviewAISettings.scheduleInterval },
-                set: { appState.setReviewAIScheduleInterval($0) }
-            )) {
+            Picker(
+                "Run frequency",
+                selection: Binding(
+                    get: { appState.reviewAISettings.scheduleInterval },
+                    set: { appState.setReviewAIScheduleInterval($0) }
+                )
+            ) {
                 ForEach(ReviewAIScheduleInterval.allCases, id: \.self) { interval in
                     Text(interval.title).tag(interval)
                 }
             }
 
-            Toggle("Apply safe scheduled suggestions automatically", isOn: Binding(
-                get: { appState.reviewAISettings.automaticallyApplyScheduledReviews },
-                set: { appState.setReviewAIScheduledAutomaticApply($0) }
-            ))
+            Toggle(
+                "Apply safe scheduled suggestions automatically",
+                isOn: Binding(
+                    get: { appState.reviewAISettings.automaticallyApplyScheduledReviews },
+                    set: { appState.setReviewAIScheduledAutomaticApply($0) }
+                )
+            )
             .disabled(!appState.selectedReviewAIHarnessIsConfirmed)
 
-            Text("Off by default: scheduled runs save recommendations for you to review. When enabled, Hago checks saved advice again and applies at most 10 safe Work or Personal rules at 95% confidence per run.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                "Off by default: scheduled runs save recommendations for you to review. When enabled, Hago checks saved advice again and applies at most 10 safe Work or Personal rules at 95% confidence per run."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
             LabeledContent("Schedule", value: appState.reviewAISettings.scheduleEnabled ? "Active" : "Paused")
             if let date = appState.reviewAIScheduleState.lastAttemptAt {
@@ -207,16 +235,19 @@ struct ReviewAISettingsView: View {
                     Button("Stop", role: .cancel) { appState.stopReviewAIAnalysis() }
                 } else {
                     Button("Run Now") { appState.analyzeReview(scheduled: true) }
-                        .disabled(!appState.selectedReviewAIHarnessIsConfirmed || appState.isDiscoveringReviewAIHarnesses)
+                        .disabled(
+                            !appState.selectedReviewAIHarnessIsConfirmed || appState.isDiscoveringReviewAIHarnesses)
                 }
                 if appState.reviewAISettings.scheduleEnabled {
                     Button("Pause Schedule") { appState.setReviewAIScheduleEnabled(false) }
                 }
             }
 
-            Text("Runs only while Hago is open and your Mac is awake. After a missed time during sleep, Hago runs once. On launch, an overdue run waits for the next interval. Unchanged groups do not use the AI again. To reconsider them, use Analyze Review on the Review screen.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                "Runs only while Hago is open and your Mac is awake. After a missed time during sleep, Hago runs once. On launch, an overdue run waits for the next interval. Unchanged groups do not use the AI again. To reconsider them, use Analyze Review on the Review screen."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -236,9 +267,11 @@ struct ReviewAISettingsView: View {
         Toggle(isOn: confirmationBinding) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Allow Review activity to be sent to \(selectedHarness.displayName)")
-                Text("The CLI can send your profession, app names, window titles, sites, URLs, and related rule values to its configured AI service.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "The CLI can send your profession, app names, window titles, sites, URLs, and related rule values to its configured AI service."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
     }

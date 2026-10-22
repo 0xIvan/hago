@@ -114,12 +114,16 @@ final class AppState: ObservableObject {
     }
 
     var selectedReviewAIHarnessIsConfirmed: Bool {
-        reviewAISettings.selectedHarness == .disabled
-            || reviewAISettings.confirmedHarnesses.contains(reviewAISettings.selectedHarness)
+        let harness = reviewAISettings.selectedHarness
+        return harness == .disabled || (reviewAISettings.confirmedHarnesses.contains(harness)
+            && (!harness.isDirectProvider || reviewAISettings.directDisclosureVersion == ReviewAIDirectCatalog.disclosureVersion))
     }
 
     var availableReviewAIModels: [ReviewAIModelOption] {
-        selectedReviewAIHarnessStatus?.models ?? []
+        if reviewAISettings.selectedHarness.isDirectProvider {
+            return ReviewAIDirectCatalog.models(for: reviewAISettings.selectedHarness)
+        }
+        return selectedReviewAIHarnessStatus?.models ?? []
     }
 
     var selectedReviewAIModelOption: ReviewAIModelOption? {
@@ -143,7 +147,7 @@ final class AppState: ObservableObject {
             return [.low, .medium, .high, .xhigh, .max]
         case .pi:
             return [.off, .minimal, .low, .medium, .high, .xhigh, .max]
-        case .disabled:
+        case .disabled, .anthropic, .openAI:
             return []
         }
     }
@@ -326,9 +330,12 @@ final class AppState: ObservableObject {
     private var reviewAIAnalysisContext: ReviewAIAnalysisContext {
         ReviewAIAnalysisContext(
             harness: reviewAISettings.selectedHarness,
-            model: reviewAISettings.selectedModel(for: reviewAISettings.selectedHarness),
+            model: reviewAISettings.selectedModel(for: reviewAISettings.selectedHarness)
+                ?? (reviewAISettings.selectedHarness.isDirectProvider ? availableReviewAIModels.first?.modelID : nil),
             reasoning: effectiveReviewAIReasoningEffort,
-            profession: reviewAISettings.profession
+            profession: reviewAISettings.profession,
+            disclosure: reviewAISettings.selectedHarness.isDirectProvider
+                ? "v\(reviewAISettings.directDisclosureVersion)-titles-\(reviewAISettings.shareRedactedTitles)" : nil
         )
     }
 
@@ -348,12 +355,20 @@ final class AppState: ObservableObject {
             reviewAIAnalysisFailed("Confirm the data disclosure for \(selectedHarness.displayName) first.", scheduled: scheduled)
             return
         }
-        guard let status = selectedReviewAIHarnessStatus,
-              status.isAvailable,
-              let executablePath = status.executablePath else {
-            reviewAIAnalysisFailed("\(selectedHarness.displayName) is not available. Refresh AI Harness settings.", scheduled: scheduled)
+        let status = selectedReviewAIHarnessStatus
+        if !selectedHarness.isDirectProvider, status?.isAvailable != true || status?.executablePath == nil {
+            reviewAIAnalysisFailed("\(selectedHarness.displayName) is not available. Refresh AI suggestions settings.", scheduled: scheduled)
             return
         }
+        let credential: String?
+        do {
+            credential = selectedHarness.isDirectProvider ? try ReviewAICredentialStore().read(for: selectedHarness) : nil
+        } catch {
+            reviewAIAnalysisFailed(error.localizedDescription, scheduled: scheduled)
+            return
+        }
+        let disclosureVersion = reviewAISettings.directDisclosureVersion
+        let shareTitles = reviewAISettings.shareRedactedTitles
 
         reviewAIAnalysisState = .analyzing
         activeReviewIsScheduled = scheduled
@@ -365,19 +380,22 @@ final class AppState: ObservableObject {
 
         reviewAIAnalysisTask = Task { @MainActor in
             do {
-                let environment = await reviewAIHarnessDiscovery.repairedEnvironment(
-                    from: ProcessInfo.processInfo.environment
-                )
-                let provider = CLIReviewAISuggestionProvider(
-                    harness: selectedHarness,
-                    executablePath: executablePath,
-                    environment: environment,
-                    model: context.model,
-                    reasoningEffort: context.reasoning,
-                    profession: context.profession
-                )
+                let provider: any ReviewAISuggestionProviding
+                if selectedHarness.isDirectProvider {
+                    provider = DirectReviewAISuggestionProvider(
+                        provider: selectedHarness, model: context.model ?? "", apiKey: credential ?? "",
+                        consentVersion: disclosureVersion, shareTitles: shareTitles, profession: context.profession
+                    )
+                } else {
+                    let environment = await reviewAIHarnessDiscovery.repairedEnvironment(from: ProcessInfo.processInfo.environment)
+                    provider = CLIReviewAISuggestionProvider(
+                        harness: selectedHarness, executablePath: status?.executablePath ?? "",
+                        environment: environment, model: context.model, reasoningEffort: context.reasoning,
+                        profession: context.profession
+                    )
+                }
                 let result = try await service.analyze(
-                    provider: provider, context: context, harnessVersion: status.version,
+                    provider: provider, context: context, harnessVersion: selectedHarness.isDirectProvider ? "direct-v1-\(shareTitles)" : status?.version,
                     automaticallyApply: automaticallyApply, force: !scheduled
                 )
                 guard revision == reviewAIRevision else {
@@ -482,8 +500,31 @@ final class AppState: ObservableObject {
         }
     }
 
+    func saveDirectAICredential(_ key: String) throws {
+        try ReviewAICredentialStore().save(key, for: reviewAISettings.selectedHarness)
+        stopReviewAIAnalysis()
+        errorMessage = nil
+    }
+
+    func disconnectDirectAI() throws {
+        stopReviewAIAnalysis()
+        try ReviewAICredentialStore().remove(for: reviewAISettings.selectedHarness)
+        setReviewAIHarnessConfirmed(false)
+    }
+
+    func setReviewAIShareTitles(_ enabled: Bool) {
+        reviewAISettings.shareRedactedTitles = enabled
+        reviewAISettings.confirmedHarnesses.remove(.anthropic)
+        reviewAISettings.confirmedHarnesses.remove(.openAI)
+        setReviewAIScheduleEnabled(false)
+        saveReviewAISettings()
+    }
+
     func selectReviewAIHarness(_ harness: ReviewAIHarnessKind) {
-        if harness == .disabled { setReviewAIScheduleEnabled(false) }
+        if harness == .disabled || (harness != reviewAISettings.selectedHarness
+            && (harness.isDirectProvider || reviewAISettings.selectedHarness.isDirectProvider)) {
+            setReviewAIScheduleEnabled(false)
+        }
         reviewAISettings.selectedHarness = harness
         saveReviewAISettings()
     }
@@ -495,6 +536,7 @@ final class AppState: ObservableObject {
         }
         if confirmed {
             reviewAISettings.confirmedHarnesses.insert(harness)
+            if harness.isDirectProvider { reviewAISettings.directDisclosureVersion = ReviewAIDirectCatalog.disclosureVersion }
         } else {
             reviewAISettings.confirmedHarnesses.remove(harness)
             setReviewAIScheduleEnabled(false)

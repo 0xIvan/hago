@@ -82,12 +82,14 @@ public struct ReviewAIAnalysisContext: Equatable, Codable, Sendable {
     public var model: String?
     public var reasoning: ReviewAIReasoningEffort?
     public var profession: ReviewAIProfession
+    public var disclosure: String?
 
-    public init(harness: ReviewAIHarnessKind, model: String?, reasoning: ReviewAIReasoningEffort?, profession: ReviewAIProfession = .notSpecified) {
+    public init(harness: ReviewAIHarnessKind, model: String?, reasoning: ReviewAIReasoningEffort?, profession: ReviewAIProfession = .notSpecified, disclosure: String? = nil) {
         self.harness = harness
         self.model = model
         self.reasoning = reasoning
         self.profession = profession
+        self.disclosure = disclosure
     }
 
     public func fingerprint(for group: ReviewAISuggestionGroup) throws -> String {
@@ -155,7 +157,7 @@ public final class ReviewAIAnalysisService {
 
     public func currentRequest() throws -> ReviewAISuggestionRequest {
         ReviewAISuggestionRequest(
-            reviewSegments: try store.reviewSegments().filter { !$0.classification.isManual },
+            reviewSegments: try store.reviewSegments().filter { !$0.classification.isManual && !$0.segment.snapshot.isPrivate },
             existingRules: try store.loadRules()
         )
     }
@@ -198,8 +200,9 @@ public final class ReviewAIAnalysisService {
             !pendingIDs.contains($0.id) && cache[$0.id]?.automaticApplicationAttempted == false
         } : []
         // Bounded batches let unchanged recommendations drop out and older pending groups advance.
-        let batch = Array(pending.prefix(50))
-        let cachedBatch = Array(reusable.prefix(50 - batch.count))
+        let batchLimit = context.harness.isDirectProvider ? 20 : 50
+        let batch = Array(pending.prefix(batchLimit))
+        let cachedBatch = Array(reusable.prefix(batchLimit - batch.count))
         let allGroups = batch + cachedBatch
         guard !allGroups.isEmpty else {
             return ReviewAIAnalysisResult(summary: nil, analyzedGroups: 0, reconciledEntries: reconciled)
