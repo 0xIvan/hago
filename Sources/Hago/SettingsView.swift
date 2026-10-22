@@ -21,6 +21,7 @@ struct RulesSettingsView: View {
     @State private var statusFilter = RuleStatusFilter.all
     @State private var sourceFilter = RuleSourceFilter.all
     @State private var fieldFilter = RuleFieldFilter.all
+    @State private var showsBuiltIns = false
 
     private var displayedRecords: [RuleReviewRecord] {
         filteredRecords(appState.ruleReviewRecords)
@@ -49,14 +50,17 @@ struct RulesSettingsView: View {
                         isBuiltIn: false,
                         action: RuleAction(kind: .work, categoryID: categoryID(for: .work), projectID: nil),
                         conditions: [
-                            RuleCondition(field: .windowTitle, operation: .contains, value: "")
-                        ]
+                            RuleCondition(field: .bundleIdentifier, operation: .equals, value: "")
+                        ],
+                        origin: .user
                     )
                 } label: {
                     Label("Add Rule", systemImage: "plus")
                 }
             }
 
+            StarterPresetsView()
+            ClassificationLearningPanel()
             ruleControls
 
             List {
@@ -66,9 +70,17 @@ struct RulesSettingsView: View {
                 }
 
                 ForEach(displayedGroups) { group in
-                    Section("\(group.title) (\(group.records.count))") {
-                        ForEach(group.records) { record in
-                            ruleRow(record)
+                    Section {
+                        if group.records.allSatisfy({ $0.rule.isBuiltIn }) {
+                            DisclosureGroup("\(group.title) (\(group.records.count))", isExpanded: $showsBuiltIns) {
+                                ForEach(group.records) { record in ruleRow(record) }
+                            }
+                        } else {
+                            ForEach(group.records) { record in ruleRow(record) }
+                        }
+                    } header: {
+                        if !group.records.allSatisfy({ $0.rule.isBuiltIn }) {
+                            Text("\(group.title) (\(group.records.count))")
                         }
                     }
                 }
@@ -594,19 +606,23 @@ struct RuleEditorView: View {
         updatedRule.priority = priority
         updatedRule.enabled = enabled
         updatedRule.isBuiltIn = false
+        if rule.origin == .preset {
+            updatedRule.origin = .user
+            updatedRule.presetID = nil
+        }
         updatedRule.action = RuleAction(
             kind: kind,
             categoryID: categories.first { $0.kind == kind }?.id,
             projectID: UUID(uuidString: projectIDValue)
         )
-        updatedRule.conditions = [
-            RuleCondition(
+        let updatedCondition = RuleCondition(
                 id: rule.conditions.first?.id ?? UUID(),
                 field: field,
                 operation: operation,
                 value: value
             )
-        ]
+        if updatedRule.conditions.isEmpty { updatedRule.conditions = [updatedCondition] }
+        else { updatedRule.conditions[0] = updatedCondition }
 
         return updatedRule
     }
@@ -815,9 +831,12 @@ struct AccessibilityAccessPanel: View {
                         appState.accessibilityTrusted ? "Access granted" : "Window titles unavailable",
                         systemImage: appState.accessibilityTrusted ? "checkmark.circle.fill" : "exclamationmark.triangle"
                     )
+                    Text(appState.captureCapabilityLabel).font(.caption).foregroundStyle(.secondary)
+                    Text("Chrome supports verified public-window capture. Safari and other browsers are excluded until private-window status can be verified.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Text(appState.accessibilityTrusted
                          ? "Accessibility access lets Hago read active window titles."
-                         : "Hago cannot read other apps’ window titles. Discord activity without a title needs review.")
+                         : "Hago cannot read other apps’ window titles. App-level tracking continues; ambiguous activity needs review.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

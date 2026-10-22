@@ -109,12 +109,29 @@ private struct OverviewTab: View {
 private struct ReviewTab: View {
     @EnvironmentObject private var appState: AppState
     @State private var inspectingRun: ReviewAIRunSummary?
+    @State private var rememberingRule: Rule?
+    @State private var selectedGroupID: String?
+    @FocusState private var listHasKeyboardFocus: Bool
     private let formatter = TimeFormatting()
 
     var body: some View {
         List {
+            Section { ClassificationLearningPanel() }
             reviewAISuggestionsSection
             reviewItemsSection
+        }
+        .focusable()
+        .focused($listHasKeyboardFocus)
+        .onKeyPress(characters: CharacterSet(charactersIn: "wWpPiI")) { press in
+            guard listHasKeyboardFocus, !(NSApp.keyWindow?.firstResponder is NSTextView),
+                  let id = selectedGroupID, let group = appState.reviewGroups.first(where: { $0.id == id }) else { return .ignored }
+            let key = press.characters.lowercased()
+            appState.classifyReviewGroup(group, as: key == "w" ? .work : key == "p" ? .personal : .ignored)
+            selectedGroupID = appState.reviewGroups.first?.id
+            return .handled
+        }
+        .sheet(item: $rememberingRule) { rule in
+            RememberRulePreviewView(rule: rule).environmentObject(appState)
         }
         .listStyle(.plain)
         .padding(.top, 12)
@@ -231,7 +248,7 @@ private struct ReviewTab: View {
     }
 
     private var reviewItemsSection: some View {
-        Section("Review Items") {
+        Section("Needs Review · Select a row, then W / P / I") {
             if appState.reviewSegments.isEmpty {
                 ContentUnavailableView(
                     "All caught up",
@@ -246,8 +263,10 @@ private struct ReviewTab: View {
                 if let item = appState.reviewSegments.first(where: { group.segmentIDs.contains($0.id) }) {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .firstTextBaseline, spacing: 12) {
-                            Text(item.segment.appName)
-                                .font(.headline)
+                            Text(item.segment.snapshot.host.isEmpty
+                                 ? (item.segment.windowTitle.isEmpty ? item.segment.appName : item.segment.windowTitle)
+                                 : item.segment.snapshot.host)
+                                .font(.headline).lineLimit(1)
                             Text(recordingSummary(for: group))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -258,8 +277,11 @@ private struct ReviewTab: View {
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(item.segment.windowTitle.isEmpty ? "Untitled" : item.segment.windowTitle)
+                            Text(item.segment.appName).font(.caption).foregroundStyle(.secondary)
+                            Text(item.segment.windowTitle.isEmpty ? "Window title unavailable" : item.segment.windowTitle)
                                 .lineLimit(2)
+                            Text(appState.classificationExplanation(for: item))
+                                .font(.caption).foregroundStyle(.secondary)
                             if let url = item.segment.url {
                                 Text(url)
                                     .font(.caption)
@@ -293,10 +315,22 @@ private struct ReviewTab: View {
                             } label: {
                                 Label("Ignore", systemImage: "eye.slash")
                             }
+                            Menu("Remember…") {
+                                ForEach([ActivityKind.work, .personal]) { kind in
+                                    Section(kind.displayName) {
+                                        ForEach(RememberedRuleFactory().rules(from: item, kind: kind, categoryID: appState.categories.first(where: { $0.kind == kind })?.id)) { rule in
+                                            Button(rule.name) { rememberingRule = rule }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         .buttonStyle(.bordered)
                     }
                     .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedGroupID = group.id; listHasKeyboardFocus = true }
+                    .listRowBackground(selectedGroupID == group.id ? Color.accentColor.opacity(0.1) : Color.clear)
                     .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
                 }
             }
@@ -954,6 +988,7 @@ private struct ActivityRuleInspectorView: View {
     var inspection: ActivityRuleInspection
 
     @State private var selectedRuleID: UUID?
+    @State private var rememberingRule: Rule?
 
     private let rememberedRuleFactory = RememberedRuleFactory()
 
@@ -994,6 +1029,14 @@ private struct ActivityRuleInspectorView: View {
             }
             .padding(.horizontal)
             .padding(.top)
+
+            Text(appState.classificationExplanation(for: inspection.sample))
+                .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+            Menu("Remember a Scope…") {
+                ForEach(rememberedRuleFactory.rules(from: inspection.sample, kind: inspection.sample.classification.kind, categoryID: inspection.sample.classification.categoryID)) { rule in
+                    Button(rule.name) { rememberingRule = rule }
+                }
+            }.padding(.horizontal)
 
             if appliedRules.count > 1 {
                 Picker("Applied Rule", selection: $selectedRuleID) {
@@ -1040,6 +1083,9 @@ private struct ActivityRuleInspectorView: View {
                 )
                 .frame(width: 520, height: 260)
             }
+        }
+        .sheet(item: $rememberingRule) { rule in
+            RememberRulePreviewView(rule: rule).environmentObject(appState)
         }
     }
 }

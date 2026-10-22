@@ -29,28 +29,52 @@ public struct ActivityClassifier {
             return ClassificationResult(kind: .ignored, categoryID: nil, projectID: nil, ruleID: nil)
         }
 
-        let matchingRule = preparedRules.first(where: { matches(rule: $0, snapshot: snapshot) })
-        if snapshot.isDiscordWithoutTitle,
-           matchingRule?.isBuiltIn != false,
-           matchingRule?.action.kind != .ignored {
-            // Discord's default classification depends on its channel title; missing context is not personal time.
-            return ClassificationResult(kind: .review, categoryID: nil, projectID: nil, ruleID: nil)
+        let matches = preparedRules.filter { matches(rule: $0, snapshot: snapshot) }
+        if let exclusion = matches.first(where: { $0.action.kind == .ignored }) {
+            return result(for: exclusion)
         }
-
-        if let rule = matchingRule {
-            return ClassificationResult(
-                kind: rule.action.kind,
-                categoryID: rule.action.categoryID,
-                projectID: rule.action.projectID,
-                ruleID: rule.id
-            )
+        let personalRules = matches.filter { $0.origin == .user }
+        if !personalRules.isEmpty {
+            let narrowest = personalRules.filter { candidate in
+                !personalRules.contains { $0.parentRuleID == candidate.id }
+            }
+            let specificity = narrowest.map(scopeSpecificity).max() ?? 0
+            return resolve(narrowest.filter { scopeSpecificity($0) == specificity })
         }
-
-        if isBrowser(snapshot: snapshot) {
-            return ClassificationResult(kind: .review, categoryID: nil, projectID: nil, ruleID: nil)
+        if let legacy = matches.first(where: { $0.origin == nil || $0.origin == .legacy }) {
+            if snapshot.isDiscordWithoutTitle && legacy.isBuiltIn {
+                return ClassificationResult(kind: .review, categoryID: nil, projectID: nil, ruleID: nil,
+                                            reason: "Discord channel context is unavailable")
+            }
+            return result(for: legacy)
         }
+        let aiRules = matches.filter { $0.origin == .ai }
+        if !aiRules.isEmpty { return resolve(aiRules) }
+        return resolve(matches.filter { $0.origin == .preset })
+    }
 
-        return ClassificationResult(kind: .personal, categoryID: nil, projectID: nil, ruleID: nil)
+    private func resolve(_ rules: [Rule]) -> ClassificationResult {
+        guard let first = rules.first else {
+            return ClassificationResult(kind: .review, categoryID: nil, projectID: nil, ruleID: nil,
+                                        reason: "No matching rule; needs your input")
+        }
+        guard rules.allSatisfy({ $0.action == first.action }) else {
+            return ClassificationResult(kind: .review, categoryID: nil, projectID: nil, ruleID: nil,
+                                        reason: "Conflicting rules: " + rules.map(\.name).joined(separator: ", "))
+        }
+        return result(for: first)
+    }
+
+    private func result(for rule: Rule) -> ClassificationResult {
+        ClassificationResult(kind: rule.action.kind, categoryID: rule.action.categoryID,
+                             projectID: rule.action.projectID, ruleID: rule.id,
+                             reason: "\(rule.origin == .preset ? "Preset" : rule.origin == .user ? "Personal rule" : rule.origin == .ai ? "AI rule" : "Legacy rule"): \(rule.name)")
+    }
+
+    private func scopeSpecificity(_ rule: Rule) -> Int {
+        rule.conditions.reduce(0) { total, condition in
+            total + (condition.field == .url ? 40 : condition.field == .windowTitle ? 30 : condition.field == .host ? 20 : 10)
+        }
     }
 
     public func matches(rule: Rule, snapshot: ActivitySnapshot) -> Bool {

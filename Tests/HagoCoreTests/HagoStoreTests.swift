@@ -338,44 +338,6 @@ struct HagoStoreTests {
         #expect(activitySegments.first?.classification.ruleID == keeperRule.id)
     }
 
-    @Test
-    func startupAddsMissingBuiltInRulesAndReclassifiesHistory() throws {
-        let databaseURL = try temporaryDatabaseURL()
-        let segment = segment(
-            appName: "Discord",
-            bundleIdentifier: "com.hnc.Discord",
-            windowTitle: "#work | Jian Yang - Discord",
-            url: nil,
-            source: .macOS
-        )
-
-        do {
-            let store = try HagoStore(databaseURL: databaseURL)
-            let rules = try store.loadRules()
-            let discordWorkRule = try #require(rules.first { $0.name == "Discord Jian Yang #work is work" })
-            try store.deleteRule(id: discordWorkRule.id)
-            try store.save(
-                segment: segment,
-                classification: SegmentClassification(
-                    segmentID: segment.id,
-                    kind: .personal,
-                    categoryID: SeedData.personalCategoryID,
-                    projectID: nil,
-                    ruleID: nil,
-                    isManual: false
-                )
-            )
-        }
-
-        let reopenedStore = try HagoStore(databaseURL: databaseURL)
-        let rules = try reopenedStore.loadRules()
-        let discordWorkRule = try #require(rules.first { $0.name == "Discord Jian Yang #work is work" })
-        let activitySegments = try reopenedStore.activitySegments(for: Date())
-
-        #expect(activitySegments.first?.classification.kind == .work)
-        #expect(activitySegments.first?.classification.categoryID == SeedData.workCategoryID)
-        #expect(activitySegments.first?.classification.ruleID == discordWorkRule.id)
-    }
 
     @Test
     func activitySegmentsForDateReflectManualClassificationEdits() throws {
@@ -407,46 +369,6 @@ struct HagoStoreTests {
         #expect(activitySegments.first?.classification.isManual == true)
     }
 
-    @Test
-    func reopeningRepairsOnlyAutomaticUntitledDiscordFallbacks() throws {
-        let databaseURL = try temporaryDatabaseURL()
-        let store = try HagoStore(databaseURL: databaseURL)
-        let date = middayToday()
-        let fallback = try #require(try store.loadRules().first { $0.name == "Discord is personal" })
-        let project = Project(name: "Preserved project", colorHex: "#2563EB", isArchived: false)
-        try store.saveProject(project)
-        let automatic = segment(appName: "Discord", windowTitle: "", url: nil, source: .macOS, startedAt: date)
-        let manual = segment(appName: "Discord", windowTitle: "", url: nil, source: .macOS, offset: 600, startedAt: date)
-        let titled = segment(appName: "Discord", windowTitle: "#general | Jian Yang - Discord", url: nil, source: .macOS, offset: 1_200, startedAt: date)
-        for item in [automatic, manual, titled] {
-            try store.save(
-                segment: item,
-                classification: SegmentClassification(
-                    segmentID: item.id,
-                    kind: .personal,
-                    categoryID: SeedData.personalCategoryID,
-                    projectID: project.id,
-                    ruleID: fallback.id,
-                    isManual: item.id == manual.id
-                )
-            )
-        }
-
-        let reopened = try HagoStore(databaseURL: databaseURL)
-        let activities = try reopened.activitySegments(for: date)
-        let byID = Dictionary(uniqueKeysWithValues: activities.map { ($0.id, $0) })
-        #expect(byID[automatic.id]?.classification.kind == .review)
-        #expect(byID[automatic.id]?.classification.ruleID == nil)
-        #expect(byID[automatic.id]?.classification.projectID == project.id)
-        #expect(byID[manual.id]?.classification.kind == .personal)
-        #expect(byID[manual.id]?.classification.isManual == true)
-        #expect(byID[titled.id]?.classification.kind == .personal)
-        #expect(activities.count == 3)
-        #expect(activities.reduce(0) { $0 + $1.segment.duration } == 360)
-
-        let reopenedAgain = try HagoStore(databaseURL: databaseURL)
-        #expect(try reopenedAgain.activitySegments(for: date) == activities)
-    }
 
     @Test
     func bulkReviewChoiceChangesOnlySelectedPendingRecordings() throws {

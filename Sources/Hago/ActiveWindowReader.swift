@@ -19,28 +19,39 @@ struct ActiveWindowReader {
         self.accessibilityPermissionPrompt = accessibilityPermissionPrompt
     }
 
-    func currentSnapshot() -> ActivitySnapshot? {
-        guard let application = NSWorkspace.shared.frontmostApplication else {
-            return nil
-        }
-
+    @MainActor
+    func currentSnapshot() async -> ActivitySnapshot? {
+        guard let application = NSWorkspace.shared.frontmostApplication else { return nil }
         let appName = application.localizedName ?? "Unknown"
-        let bundleIdentifier = application.bundleIdentifier ?? ""
-        let processIdentifier = application.processIdentifier
-        let windowTitle = focusedWindowTitle(processIdentifier: processIdentifier)
-        let chromeInfo = chromeTabInfo(bundleIdentifier: bundleIdentifier, appName: appName)
-        if (bundleIdentifier.lowercased().contains("chrome") || appName.lowercased().contains("chrome")), chromeInfo == nil {
-            // Without Chrome's mode response, a fallback title could belong to an incognito window.
+        let bundle = application.bundleIdentifier ?? ""
+        let pid = application.processIdentifier
+        return await Task.detached(priority: .utility) {
+            Self.snapshot(appName: appName, bundleIdentifier: bundle, processIdentifier: pid)
+        }.value
+    }
+
+    func captureCapabilityLabel() -> String {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return "No foreground application" }
+        let bundle = app.bundleIdentifier ?? ""
+        if bundle == "com.google.Chrome" {
+            return "Chrome: context available only when Automation access and public-window status are verified"
+        }
+        if BrowserCapturePolicy.isBrowser(bundleIdentifier: bundle, appName: app.localizedName ?? "") {
+            return "\(app.localizedName ?? "Browser"): capture paused because private-window status cannot be verified"
+        }
+        return accessibilityIsTrusted() ? "App and window context available" : "App tracking available; Accessibility access needed for window titles"
+    }
+
+    private static func snapshot(appName: String, bundleIdentifier: String, processIdentifier: pid_t) -> ActivitySnapshot? {
+        if BrowserCapturePolicy.isBrowser(bundleIdentifier: bundleIdentifier, appName: appName) && bundleIdentifier != "com.google.Chrome" {
             return nil
         }
-
+        let chromeInfo = chromeTabInfo(bundleIdentifier: bundleIdentifier, appName: appName)
+        if bundleIdentifier == "com.google.Chrome", chromeInfo == nil { return nil }
         return ActivitySnapshot(
-            appName: appName,
-            bundleIdentifier: bundleIdentifier,
-            processIdentifier: processIdentifier,
-            windowTitle: chromeInfo?.title ?? windowTitle,
-            url: chromeInfo?.url,
-            source: chromeInfo == nil ? .macOS : .chrome,
+            appName: appName, bundleIdentifier: bundleIdentifier, processIdentifier: processIdentifier,
+            windowTitle: chromeInfo?.title ?? focusedWindowTitle(processIdentifier: processIdentifier),
+            url: chromeInfo?.url, source: chromeInfo == nil ? .macOS : .chrome,
             isPrivate: chromeInfo?.isPrivate ?? false
         )
     }
@@ -57,7 +68,7 @@ struct ActiveWindowReader {
         accessibilityPermissionPrompt()
     }
 
-    private func focusedWindowTitle(processIdentifier: pid_t) -> String {
+    private static func focusedWindowTitle(processIdentifier: pid_t) -> String {
         if let title = accessibilityWindowTitle(processIdentifier: processIdentifier), !title.isEmpty {
             return title
         }
@@ -65,8 +76,9 @@ struct ActiveWindowReader {
         return graphicsWindowTitle(processIdentifier: processIdentifier)
     }
 
-    private func accessibilityWindowTitle(processIdentifier: pid_t) -> String? {
+    private static func accessibilityWindowTitle(processIdentifier: pid_t) -> String? {
         let appElement = AXUIElementCreateApplication(processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, 0.5)
         var focusedWindow: CFTypeRef?
         let windowResult = AXUIElementCopyAttributeValue(
             appElement,
@@ -92,7 +104,7 @@ struct ActiveWindowReader {
         return titleValue as? String
     }
 
-    private func graphicsWindowTitle(processIdentifier: pid_t) -> String {
+    private static func graphicsWindowTitle(processIdentifier: pid_t) -> String {
         guard let windows = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
@@ -114,10 +126,8 @@ struct ActiveWindowReader {
         return window?[kCGWindowName as String] as? String ?? ""
     }
 
-    private func chromeTabInfo(bundleIdentifier: String, appName: String) -> ChromeTabInfo? {
-        let normalizedBundle = bundleIdentifier.lowercased()
-        let normalizedName = appName.lowercased()
-        guard normalizedBundle.contains("chrome") || normalizedName.contains("chrome") else {
+    private static func chromeTabInfo(bundleIdentifier: String, appName: String) -> ChromeTabInfo? {
+        guard bundleIdentifier == "com.google.Chrome" else {
             return nil
         }
 
@@ -151,8 +161,10 @@ struct ActiveWindowReader {
             return ChromeTabInfo(url: nil, title: "Incognito", isPrivate: true)
         }
 
+        guard mode.caseInsensitiveCompare("normal") == .orderedSame,
+              let url = lines.dropFirst().first, URL(string: url)?.scheme != nil else { return nil }
         return ChromeTabInfo(
-            url: lines.dropFirst().first,
+            url: url,
             title: lines.dropFirst(2).first ?? "",
             isPrivate: false
         )

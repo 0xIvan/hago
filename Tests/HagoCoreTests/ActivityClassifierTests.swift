@@ -7,31 +7,7 @@ struct ActivityClassifierTests {
     private let classifier = ActivityClassifier()
     private let rules = SeedData.rules
 
-    @Test
-    func cursorIsWork() {
-        let result = classifier.classify(
-            snapshot: snapshot(appName: "Cursor", title: "Example Project"),
-            rules: rules
-        )
 
-        #expect(result.kind == .work)
-        #expect(result.projectID == nil)
-    }
-
-    @Test
-    func visualStudioCodeIsWorkWithoutARecognizedRepository() {
-        let result = classifier.classify(
-            snapshot: snapshot(
-                appName: "Code",
-                bundleIdentifier: "com.microsoft.VSCode",
-                title: "Untitled-1"
-            ),
-            rules: rules
-        )
-
-        #expect(result.kind == .work)
-        #expect(result.projectID == nil)
-    }
 
     @Test
     func visualStudioCodeRepositoryRuleAssignsTheProjectBeforeTheAppFallback() {
@@ -65,47 +41,9 @@ struct ActivityClassifierTests {
         #expect(result.ruleID == repositoryRule.id)
     }
 
-    @Test
-    func localhostChromeIsWork() {
-        let result = classifier.classify(
-            snapshot: snapshot(
-                appName: "Google Chrome",
-                title: "Local app",
-                url: "http://localhost:5173/dashboard"
-            ),
-            rules: rules
-        )
 
-        #expect(result.kind == .work)
-    }
 
-    @Test
-    func finderIsPersonal() {
-        let result = classifier.classify(snapshot: snapshot(appName: "Finder"), rules: rules)
 
-        #expect(result.kind == .personal)
-    }
-
-    @Test
-    func discordJianYangWorkChannelIsWork() {
-        let result = classifier.classify(
-            snapshot: snapshot(appName: "Discord", title: "#work | Jian Yang - Discord"),
-            rules: rules
-        )
-
-        #expect(result.kind == .work)
-        #expect(result.categoryID == SeedData.workCategoryID)
-    }
-
-    @Test
-    func otherDiscordChannelsArePersonal() {
-        let result = classifier.classify(
-            snapshot: snapshot(appName: "Discord", title: "#general | Jian Yang - Discord"),
-            rules: rules
-        )
-
-        #expect(result.kind == .personal)
-    }
 
     @Test
     func discordWithoutACapturedTitleNeedsReview() {

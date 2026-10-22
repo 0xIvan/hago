@@ -1,11 +1,13 @@
 import Foundation
 import SQLite3
+import CryptoKit
 
 public enum HagoStoreError: Error, LocalizedError {
     case failedToOpenDatabase(String)
     case failedToPrepare(String)
     case failedToStep(String)
     case missingDatabase
+    case unsupportedSchema(Int)
 
     public var errorDescription: String? {
         switch self {
@@ -15,6 +17,8 @@ public enum HagoStoreError: Error, LocalizedError {
             "Could not prepare database statement: \(message)"
         case .failedToStep(let message):
             "Could not execute database statement: \(message)"
+        case .unsupportedSchema(let version):
+            "This database uses newer schema \(version). Open it with a newer Hago version. No changes were made."
         case .missingDatabase:
             "Database connection is missing."
         }
@@ -91,11 +95,14 @@ public final class HagoStore {
         }
 
         database = connection
-        try execute("PRAGMA foreign_keys = ON")
-        try migrate()
-        try seedIfNeeded()
-        try deduplicateRememberedRules()
-        try repairUnverifiedDiscordClassifications()
+        do {
+            try execute("PRAGMA foreign_keys = ON")
+            try migrateVersioned(databaseURL: databaseURL)
+        } catch {
+            sqlite3_close(connection)
+            database = nil
+            throw error
+        }
     }
 
     deinit {
@@ -224,12 +231,16 @@ public final class HagoStore {
         )
 
         try saveClassification(classification)
+        if !classification.isManual {
+            let result = classifier.classify(snapshot: segment.snapshot, rules: try loadRules())
+            try saveReason(result.reason, segmentID: segment.id)
+        }
     }
 
     public func loadRules() throws -> [Rule] {
         let rules = try query(
             """
-            SELECT id, name, priority, enabled, is_built_in, action_kind, category_id, project_id
+            SELECT id, name, priority, enabled, is_built_in, action_kind, category_id, project_id, origin, preset_id, parent_rule_id
             FROM rules
             ORDER BY priority ASC, name ASC
             """
@@ -245,7 +256,10 @@ public final class HagoStore {
                     categoryID: optionalUUIDColumn(statement, 6),
                     projectID: optionalUUIDColumn(statement, 7)
                 ),
-                conditions: []
+                conditions: [],
+                origin: ClassificationRuleOrigin(rawValue: stringColumn(statement, 8)),
+                presetID: optionalStringColumn(statement, 9),
+                parentRuleID: optionalUUIDColumn(statement, 10)
             )
         }
 
@@ -325,9 +339,23 @@ public final class HagoStore {
     }
 
     public func saveRule(_ rule: Rule) throws {
+        if rule.origin == .user, rule.conditions.contains(where: { $0.field == .windowTitle }),
+           !rule.conditions.contains(where: { $0.field == .bundleIdentifier || $0.field == .host }) {
+            throw HagoStoreError.failedToStep("Title rules must also identify an app or site")
+        }
+        try transaction {
+            if rule.presetID != nil {
+                if rule.enabled { try execute("DELETE FROM preset_tombstones WHERE rule_id=?", bindings: [.text(rule.id.uuidString)]) }
+                else { try execute("INSERT OR IGNORE INTO preset_tombstones(rule_id) VALUES (?)", bindings: [.text(rule.id.uuidString)]) }
+            }
+            try saveRuleWithinTransaction(rule)
+        }
+    }
+
+    private func saveRuleWithinTransaction(_ rule: Rule) throws {
         try execute(
             """
-            INSERT OR REPLACE INTO rules (
+            INSERT INTO rules (
                 id,
                 name,
                 priority,
@@ -335,9 +363,12 @@ public final class HagoStore {
                 is_built_in,
                 action_kind,
                 category_id,
-                project_id
+                project_id, origin, preset_id, parent_rule_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET name=excluded.name, priority=excluded.priority, enabled=excluded.enabled,
+              is_built_in=excluded.is_built_in, action_kind=excluded.action_kind, category_id=excluded.category_id,
+              project_id=excluded.project_id, origin=excluded.origin, preset_id=excluded.preset_id, parent_rule_id=excluded.parent_rule_id
             """,
             bindings: [
                 .text(rule.id.uuidString),
@@ -347,7 +378,10 @@ public final class HagoStore {
                 .bool(rule.isBuiltIn),
                 .text(rule.action.kind.rawValue),
                 .text(rule.action.categoryID?.uuidString),
-                .text(rule.action.projectID?.uuidString)
+                .text(rule.action.projectID?.uuidString),
+                .text(rule.origin?.rawValue ?? "legacy"),
+                .text(rule.presetID),
+                .text(rule.parentRuleID?.uuidString)
             ]
         )
 
@@ -422,6 +456,9 @@ public final class HagoStore {
     }
 
     public func deleteRule(id: UUID) throws {
+        if let rule = try loadRules().first(where: { $0.id == id }), rule.presetID != nil {
+            try execute("INSERT OR IGNORE INTO preset_tombstones(rule_id) VALUES (?)", bindings: [.text(id.uuidString)])
+        }
         try execute("DELETE FROM rule_conditions WHERE rule_id = ?", bindings: [.text(id.uuidString)])
         try execute("DELETE FROM rules WHERE id = ?", bindings: [.text(id.uuidString)])
     }
@@ -543,7 +580,7 @@ public final class HagoStore {
         }
     }
 
-    public func reclassify(scope: ReclassificationScope, preserveProjects: Bool = false) throws {
+    public func reclassify(scope: ReclassificationScope, preserveProjects: Bool = true) throws {
         let startDate: Date?
         switch scope {
         case .today:
@@ -563,7 +600,7 @@ public final class HagoStore {
         }
     }
 
-    public func reclassify(ruleID: UUID, scope: ReclassificationScope, preserveProjects: Bool = false) throws {
+    public func reclassify(ruleID: UUID, scope: ReclassificationScope, preserveProjects: Bool = true) throws {
         let startDate: Date?
         switch scope {
         case .today:
@@ -934,7 +971,8 @@ public final class HagoStore {
             enabled: true,
             isBuiltIn: false,
             action: RuleAction(kind: kind, categoryID: categoryID, projectID: nil),
-            conditions: [condition]
+            conditions: [condition],
+            origin: .ai
         )
         let existingRule = try loadRules().first { rememberedRuleSignature($0) == rememberedRuleSignature(rule) }
         if var existingRule {
@@ -1459,7 +1497,6 @@ public final class HagoStore {
         try execute("CREATE INDEX IF NOT EXISTS rules_priority_idx ON rules(priority)")
         try execute("CREATE INDEX IF NOT EXISTS review_ai_runs_created_at_idx ON review_ai_runs(created_at)")
         try execute("CREATE INDEX IF NOT EXISTS review_ai_decisions_run_id_idx ON review_ai_decisions(run_id)")
-        try deleteSystemSegments()
     }
 
     private func seedIfNeeded() throws {
@@ -1481,48 +1518,7 @@ public final class HagoStore {
             }
         }
 
-        try insertMissingBuiltInRules()
-    }
 
-    private func insertMissingBuiltInRules() throws {
-        let existingRuleIDs = Set(try loadRules().map(\.id))
-        var insertedRuleIDs: [UUID] = []
-
-        for rule in SeedData.rules where rule.isBuiltIn && !existingRuleIDs.contains(rule.id) {
-            try saveRule(rule)
-            insertedRuleIDs.append(rule.id)
-        }
-
-        for ruleID in insertedRuleIDs {
-            try reclassify(ruleID: ruleID, scope: .allHistory)
-        }
-    }
-
-    private func repairUnverifiedDiscordClassifications() throws {
-        let currentRules = try loadRules()
-        guard let fallback = currentRules.first(where: {
-            $0.id == UUID(uuidString: "30000000-0000-0000-0000-000000000004")
-                && $0.isBuiltIn && $0.action.kind == .personal
-        }) else { return }
-
-        let candidates = try reclassificationCandidates(
-            startDate: nil,
-            predicate: SQLPredicate(
-                sql: "s.app_name_normalized LIKE ? AND s.window_title_normalized = '' AND c.kind = ? AND c.rule_id = ?",
-                bindings: [.text("%discord%"), .text(ActivityKind.personal.rawValue), .text(fallback.id.uuidString)],
-                indexName: nil
-            )
-        )
-        guard !candidates.isEmpty else { return }
-        let rules = classifier.preparedRules(from: currentRules)
-
-        try transaction {
-            for candidate in candidates {
-                let result = classifier.classify(snapshot: candidate.segment.snapshot, preparedRules: rules)
-                guard result.kind == .review else { continue }
-                try applyReclassificationResult(result, to: candidate, preserveProject: true)
-            }
-        }
     }
 
     private func count(table: String) throws -> Int {
@@ -1630,6 +1626,13 @@ public final class HagoStore {
                 .bool(classification.isManual)
             ]
         )
+        let reason: String
+        if classification.isManual { reason = "Your explicit correction" }
+        else if let ruleID = classification.ruleID, let rule = try loadRules().first(where: { $0.id == ruleID }) {
+            reason = "\(rule.origin == .preset ? "Preset" : rule.origin == .user ? "Personal rule" : rule.origin == .ai ? "AI rule" : "Legacy rule"): \(rule.name)"
+        } else { reason = "No matching rule; needs your input" }
+        try execute("INSERT INTO classification_reasons(segment_id, reason) VALUES (?, ?) ON CONFLICT(segment_id) DO UPDATE SET reason=excluded.reason",
+                    bindings: [.text(classification.segmentID.uuidString), .text(reason)])
     }
 
     private func loadClassification(segmentID: UUID) throws -> SegmentClassification? {
@@ -1691,6 +1694,7 @@ public final class HagoStore {
         }
 
         try saveClassification(classification)
+        try saveReason(result.reason, segmentID: candidate.segment.id)
     }
 
     private func reclassificationCandidates(startDate: Date?) throws -> [ReclassificationCandidate] {
@@ -2102,13 +2106,14 @@ public final class HagoStore {
     }
 
     private func transaction(_ work: () throws -> Void) throws {
-        try execute("BEGIN IMMEDIATE TRANSACTION")
-
+        let savepoint = "hago_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        try execute("SAVEPOINT \(savepoint)")
         do {
             try work()
-            try execute("COMMIT")
+            try execute("RELEASE SAVEPOINT \(savepoint)")
         } catch {
-            try? execute("ROLLBACK")
+            try? execute("ROLLBACK TO SAVEPOINT \(savepoint)")
+            try? execute("RELEASE SAVEPOINT \(savepoint)")
             throw error
         }
     }
@@ -2155,10 +2160,14 @@ public final class HagoStore {
         try bind(bindings, to: statement)
 
         var rows: [T] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
             rows.append(try map(statement))
+            result = sqlite3_step(statement)
         }
-
+        guard result == SQLITE_DONE else {
+            throw HagoStoreError.failedToStep(String(cString: sqlite3_errmsg(database)))
+        }
         return rows
     }
 
@@ -2354,4 +2363,246 @@ private func optionalUUIDColumn(_ statement: OpaquePointer?, _ index: Int32) -> 
     }
 
     return UUID(uuidString: value)
+}
+
+extension HagoStore {
+    private func migrateVersioned(databaseURL: URL) throws {
+        let version = try query("PRAGMA user_version") { intColumn($0, 0) }.first ?? 0
+        guard version <= 1 else { throw HagoStoreError.unsupportedSchema(version) }
+        guard version == 0 else { return }
+        let existing = try query("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='activity_segments'") { intColumn($0, 0) }.first == 1
+        if existing {
+            try backup(to: databaseURL.deletingLastPathComponent().appendingPathComponent("\(databaseURL.lastPathComponent).pre-v1-\(UUID().uuidString).sqlite"))
+        }
+        try transaction {
+            try migrate()
+            try execute("ALTER TABLE rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'legacy'")
+            try execute("ALTER TABLE rules ADD COLUMN preset_id TEXT")
+            try execute("ALTER TABLE rules ADD COLUMN parent_rule_id TEXT")
+            try execute("CREATE TABLE classification_reasons(segment_id TEXT PRIMARY KEY REFERENCES activity_segments(id) ON DELETE CASCADE, reason TEXT NOT NULL)")
+            try execute("INSERT INTO classification_reasons SELECT segment_id, CASE WHEN is_manual=1 THEN 'Your explicit correction (legacy)' ELSE 'Legacy classification; original reason unavailable' END FROM classifications")
+            try execute("CREATE TABLE preset_selections(pack_id TEXT PRIMARY KEY, version INTEGER NOT NULL)")
+            try execute("CREATE TABLE preset_tombstones(rule_id TEXT PRIMARY KEY)")
+            try execute("CREATE TABLE correction_actions(id TEXT PRIMARY KEY, created_at REAL NOT NULL, rule_id TEXT, rule_fingerprint TEXT, undone INTEGER NOT NULL DEFAULT 0)")
+            try execute("CREATE TABLE correction_changes(action_id TEXT NOT NULL REFERENCES correction_actions(id) ON DELETE CASCADE, segment_id TEXT NOT NULL REFERENCES activity_segments(id) ON DELETE CASCADE, before_payload TEXT NOT NULL, after_payload TEXT NOT NULL, before_reason TEXT NOT NULL, PRIMARY KEY(action_id, segment_id))")
+            try execute("CREATE TABLE learning_dismissals(context_key TEXT PRIMARY KEY, evidence_key TEXT NOT NULL)")
+            if !existing { try seedIfNeeded() }
+            try execute("UPDATE rules SET is_built_in=0 WHERE id='20000000-0000-0000-0000-000000000014'")
+            try execute("PRAGMA user_version=1")
+        }
+    }
+
+    public func backup(to destination: URL) throws {
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw HagoStoreError.failedToOpenDatabase("Backup destination already exists")
+        }
+        var target: OpaquePointer?
+        guard sqlite3_open(destination.path, &target) == SQLITE_OK, let target else {
+            throw HagoStoreError.failedToOpenDatabase("Could not create pre-migration backup")
+        }
+        defer { sqlite3_close(target) }
+        guard let backup = sqlite3_backup_init(target, "main", database, "main") else {
+            throw HagoStoreError.failedToStep("Could not start consistent database backup")
+        }
+        let result = sqlite3_backup_step(backup, -1)
+        let finish = sqlite3_backup_finish(backup)
+        guard result == SQLITE_DONE, finish == SQLITE_OK else {
+            throw HagoStoreError.failedToStep("Could not finish pre-migration backup; database left unchanged")
+        }
+    }
+
+    public func enabledPresetIDs() throws -> Set<String> {
+        Set(try query("SELECT pack_id FROM preset_selections") { stringColumn($0, 0) })
+    }
+
+    public func setEnabledPresetIDs(_ ids: Set<String>) throws {
+        try transaction { try setEnabledPresetIDsWithinTransaction(ids) }
+    }
+
+    public func applyWorkProfile(presetIDs: Set<String>, rules: [Rule], removingRuleIDs: [UUID]) throws {
+        try transaction {
+            try setEnabledPresetIDsWithinTransaction(presetIDs)
+            for id in removingRuleIDs { try deleteRule(id: id) }
+            for rule in rules { try saveRule(rule) }
+        }
+    }
+
+    private func setEnabledPresetIDsWithinTransaction(_ ids: Set<String>) throws {
+        let valid = Set(StarterPresets.packs.map(\.id))
+        let selected = ids.intersection(valid)
+        try execute("DELETE FROM preset_selections")
+        for id in selected {
+            try execute("INSERT INTO preset_selections(pack_id, version) VALUES (?, ?)", bindings: [.text(id), .integer(StarterPresets.catalogVersion)])
+        }
+        let tombstones = Set(try query("SELECT rule_id FROM preset_tombstones") { stringColumn($0, 0) })
+        let existing = try loadRules()
+        for pack in StarterPresets.packs {
+            for var rule in pack.rules where !tombstones.contains(rule.id.uuidString) {
+                if let old = existing.first(where: { $0.id == rule.id }) {
+                    guard old.origin == .preset else { continue }
+                    rule = old
+                }
+                rule.enabled = selected.contains(pack.id)
+                try saveRuleWithinTransaction(rule)
+            }
+        }
+    }
+
+    public func classificationExplanation(for entry: ClassifiedSegment) throws -> String {
+        try query("SELECT reason FROM classification_reasons WHERE segment_id=?", bindings: [.text(entry.id.uuidString)]) { stringColumn($0, 0) }.first ?? "Legacy classification"
+    }
+
+    public func previewRememberedRule(_ rule: Rule) throws -> RuleImpactPreview {
+        let candidates = try reclassificationCandidates(matching: rule, startDate: nil)
+            .filter { $0.classification.projectID == nil && classifier.matches(rule: rule, snapshot: $0.segment.snapshot) }
+        let rules = classifier.preparedRules(from: try loadRules().filter { $0.id != rule.id } + [rule])
+        let affected = candidates.filter { candidate in
+            let result = classifier.classify(snapshot: candidate.segment.snapshot, preparedRules: rules)
+            return result.kind != candidate.classification.kind || result.ruleID != candidate.classification.ruleID
+        }
+        return RuleImpactPreview(affectedCount: affected.count, affectedSeconds: affected.reduce(0) { $0 + $1.segment.duration },
+                                 examples: Array(affected.prefix(4).map { $0.segment.windowTitle.isEmpty ? $0.segment.appName : $0.segment.windowTitle }))
+    }
+
+    @discardableResult
+    public func applyRememberedRule(_ rule: Rule) throws -> UUID {
+        guard rule.action.kind != .ignored else {
+            throw HagoStoreError.failedToStep("Privacy exclusions use permanent removal, not reversible learning")
+        }
+        let actionID = UUID()
+        try transaction {
+            let previous = try loadRules().first { $0.id == rule.id }
+            guard previous == nil else { throw HagoStoreError.failedToStep("Create a new scoped rule to preserve the existing rule") }
+            try execute("INSERT INTO correction_actions(id, created_at, rule_id, rule_fingerprint) VALUES (?, ?, ?, ?)",
+                        bindings: [.text(actionID.uuidString), .double(Date().timeIntervalSince1970), .text(rule.id.uuidString), .text(try ruleFingerprint(rule))])
+            try saveRule(rule)
+            let rules = classifier.preparedRules(from: try loadRules())
+            for candidate in try reclassificationCandidates(matching: rule, startDate: nil)
+                where candidate.classification.projectID == nil && classifier.matches(rule: rule, snapshot: candidate.segment.snapshot) {
+                let result = classifier.classify(snapshot: candidate.segment.snapshot, preparedRules: rules)
+                guard result.kind != .ignored else { continue }
+                let after = SegmentClassification(segmentID: candidate.segment.id, kind: result.kind, categoryID: result.categoryID,
+                                                  projectID: nil, ruleID: result.ruleID, isManual: false)
+                try recordCorrection(actionID: actionID, before: candidate.classification, after: after)
+                try saveClassification(after)
+                try saveReason(result.reason, segmentID: candidate.segment.id)
+            }
+        }
+        return actionID
+    }
+
+    @discardableResult
+    public func correctSegments(ids: [UUID], kind: ActivityKind, categoryID: UUID?) throws -> UUID {
+        let actionID = UUID()
+        try transaction {
+            try execute("INSERT INTO correction_actions(id, created_at) VALUES (?, ?)", bindings: [.text(actionID.uuidString), .double(Date().timeIntervalSince1970)])
+            for id in Set(ids) {
+                guard let before = try loadClassification(segmentID: id) else { continue }
+                if kind == .ignored { try deleteSegment(id: id); continue }
+                let after = SegmentClassification(segmentID: id, kind: kind, categoryID: categoryID,
+                                                  projectID: before.projectID, ruleID: nil, isManual: true)
+                try recordCorrection(actionID: actionID, before: before, after: after)
+                try saveClassification(after)
+            }
+        }
+        return actionID
+    }
+
+    public func latestCorrectionActionID() throws -> UUID? {
+        try query("SELECT id FROM correction_actions WHERE undone=0 AND (rule_id IS NOT NULL OR EXISTS(SELECT 1 FROM correction_changes c WHERE c.action_id=correction_actions.id)) ORDER BY created_at DESC LIMIT 1") { uuidColumn($0, 0) }.first
+    }
+
+    @discardableResult
+    public func undoCorrection(id: UUID) throws -> Int {
+        var restored = 0
+        try transaction {
+            let actions = try query("SELECT rule_id, rule_fingerprint FROM correction_actions WHERE id=? AND undone=0", bindings: [.text(id.uuidString)]) {
+                (optionalUUIDColumn($0, 0), optionalStringColumn($0, 1))
+            }
+            guard let action = actions.first else { return }
+            if let ruleID = action.0, let payload = action.1 {
+                guard let current = try loadRules().first(where: { $0.id == ruleID }), try ruleFingerprint(current) == payload else {
+                    throw HagoStoreError.failedToStep("This rule changed after learning. Remove it manually to preserve later choices.")
+                }
+                try execute("DELETE FROM rules WHERE id=?", bindings: [.text(ruleID.uuidString)])
+            }
+            let changes = try query("SELECT segment_id, before_payload, after_payload, before_reason FROM correction_changes WHERE action_id=?", bindings: [.text(id.uuidString)]) {
+                (uuidColumn($0, 0), stringColumn($0, 1), stringColumn($0, 2), stringColumn($0, 3))
+            }
+            for (segmentID, beforePayload, afterPayload, beforeReason) in changes {
+                let before = try JSONDecoder().decode(SegmentClassification.self, from: Data(beforePayload.utf8))
+                let after = try JSONDecoder().decode(SegmentClassification.self, from: Data(afterPayload.utf8))
+                guard let current = try loadClassification(segmentID: segmentID) else { continue }
+                // Deleting a rule clears its FK; compare the actual decision while accepting that clearing.
+                var expected = after
+                if action.0 != nil { expected.ruleID = nil }
+                guard current == expected else { continue }
+                var safeBefore = before
+                if let priorRule = before.ruleID, !(try loadRules().contains { $0.id == priorRule }) { safeBefore.ruleID = nil }
+                if let categoryID = safeBefore.categoryID, !(try loadCategories().contains { $0.id == categoryID }) { safeBefore.categoryID = nil }
+                if let projectID = safeBefore.projectID, !(try loadProjects().contains { $0.id == projectID }) { safeBefore.projectID = nil }
+                try saveClassification(safeBefore)
+                try saveReason(beforeReason, segmentID: segmentID)
+                restored += 1
+            }
+            try execute("UPDATE correction_actions SET undone=1 WHERE id=?", bindings: [.text(id.uuidString)])
+        }
+        return restored
+    }
+
+    private func recordCorrection(actionID: UUID, before: SegmentClassification, after: SegmentClassification) throws {
+        let reason = try query("SELECT reason FROM classification_reasons WHERE segment_id=?", bindings: [.text(before.segmentID.uuidString)]) { stringColumn($0, 0) }.first ?? "Legacy classification"
+        try execute("INSERT INTO correction_changes(action_id, segment_id, before_payload, after_payload, before_reason) VALUES (?, ?, ?, ?, ?)",
+                    bindings: [.text(actionID.uuidString), .text(before.segmentID.uuidString), .text(try encoded(before)), .text(try encoded(after)), .text(reason)])
+    }
+
+    private func saveReason(_ reason: String, segmentID: UUID) throws {
+        try execute("UPDATE classification_reasons SET reason=? WHERE segment_id=?", bindings: [.text(reason), .text(segmentID.uuidString)])
+    }
+
+    private func encoded<T: Encodable>(_ value: T) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return String(decoding: try encoder.encode(value), as: UTF8.self)
+    }
+
+    private func ruleFingerprint(_ rule: Rule) throws -> String {
+        SHA256.hash(data: Data(try encoded(rule).utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    public func learningSuggestions() throws -> [CorrectionLearningSuggestion] {
+        let manualEntries = try query("""
+            SELECT s.id, s.started_at, s.ended_at, s.app_name, s.bundle_id, s.process_id, s.window_title, s.url, s.source,
+                   c.kind, c.category_id, c.project_id, c.rule_id, c.is_manual, NULL, NULL, NULL
+            FROM classifications c JOIN activity_segments s ON s.id=c.segment_id
+            WHERE c.is_manual=1 AND c.kind IN ('work','personal')
+            """) { classifiedSegmentColumn($0) }
+        var evidence: [String: [(ClassifiedSegment, Rule)]] = [:]
+        for entry in manualEntries {
+            let options = RememberedRuleFactory().rules(from: entry, kind: entry.classification.kind, categoryID: entry.classification.categoryID)
+            for rule in options {
+                let key = learningContextKey(rule)
+                evidence[key, default: []].append((entry, rule))
+            }
+        }
+        let dismissed = Dictionary(uniqueKeysWithValues: try query("SELECT context_key, evidence_key FROM learning_dismissals") { (stringColumn($0, 0), stringColumn($0, 1)) })
+        let existing = try loadRules()
+        return evidence.compactMap { key, entries in
+            guard let first = entries.first, entries.allSatisfy({ $0.0.classification.kind == first.0.classification.kind }) else { return nil }
+            let days = Set(entries.map { HagoCalendar.shared.dayInterval(containing: $0.0.segment.startedAt).start.timeIntervalSince1970 })
+            guard days.count >= 3, !existing.contains(where: { $0.enabled && learningContextKey($0) == key && $0.action == first.1.action }) else { return nil }
+            let fingerprint = "\(first.0.classification.kind.rawValue):\(days.sorted())"
+            guard dismissed[key] != fingerprint else { return nil }
+            return CorrectionLearningSuggestion(id: key, rule: first.1, days: days.count, evidenceKey: fingerprint)
+        }.sorted { $0.days > $1.days }
+    }
+
+    private func learningContextKey(_ rule: Rule) -> String {
+        let signature = rule.conditions.map { "\($0.field.rawValue):\($0.operation.rawValue):\($0.value.lowercased())" }.sorted().joined(separator: "|")
+        return SHA256.hash(data: Data(signature.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    public func dismissLearningSuggestion(_ suggestion: CorrectionLearningSuggestion) throws {
+        try execute("INSERT INTO learning_dismissals(context_key, evidence_key) VALUES (?, ?) ON CONFLICT(context_key) DO UPDATE SET evidence_key=excluded.evidence_key", bindings: [.text(suggestion.id), .text(suggestion.evidenceKey)])
+    }
 }

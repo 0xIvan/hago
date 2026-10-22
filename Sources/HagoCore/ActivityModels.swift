@@ -130,7 +130,7 @@ public struct ActivitySegment: Identifiable, Equatable, Sendable {
     }
 }
 
-public struct SegmentClassification: Equatable, Sendable {
+public struct SegmentClassification: Equatable, Codable, Sendable {
     public var segmentID: UUID
     public var kind: ActivityKind
     public var categoryID: UUID?

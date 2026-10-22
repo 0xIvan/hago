@@ -18,7 +18,7 @@ public enum SeedData {
     }
 
     public static var rules: [Rule] {
-        ignoreRules + workRules + personalRules
+        ignoreRules
     }
 
     private static var ignoreRules: [Rule] {
@@ -41,51 +41,6 @@ public enum SeedData {
                 operation: .contains,
                 value: "Incognito"
             )
-        ]
-    }
-
-    private static var workRules: [Rule] {
-        [
-            rule(id: "20000000-0000-0000-0000-000000000001", name: "Cursor is work", priority: 200, kind: .work, field: .appName, operation: .contains, value: "Cursor"),
-            rule(id: "20000000-0000-0000-0000-000000000002", name: "Codex is work", priority: 200, kind: .work, field: .appName, operation: .contains, value: "Codex"),
-            rule(id: "20000000-0000-0000-0000-000000000003", name: "Slack is work", priority: 200, kind: .work, field: .appName, operation: .contains, value: "Slack"),
-            rule(id: "20000000-0000-0000-0000-000000000004", name: "Notion is work", priority: 220, kind: .work, field: .appName, operation: .contains, value: "Notion"),
-            rule(id: "20000000-0000-0000-0000-000000000005", name: "Google Docs is work", priority: 200, kind: .work, field: .host, operation: .equals, value: "docs.google.com"),
-            rule(id: "20000000-0000-0000-0000-000000000006", name: "Figma is work", priority: 200, kind: .work, field: .appName, operation: .contains, value: "Figma"),
-            rule(id: "20000000-0000-0000-0000-000000000007", name: "Zoom is work", priority: 200, kind: .work, field: .appName, operation: .contains, value: "zoom"),
-            rule(id: "20000000-0000-0000-0000-000000000008", name: "Terminal is work", priority: 200, kind: .work, field: .appName, operation: .contains, value: "Terminal"),
-            rule(id: "20000000-0000-0000-0000-000000000009", name: "iTerm is work", priority: 200, kind: .work, field: .appName, operation: .contains, value: "iTerm"),
-            rule(id: "20000000-0000-0000-0000-000000000010", name: "Warp is work", priority: 200, kind: .work, field: .appName, operation: .contains, value: "Warp"),
-            rule(id: "20000000-0000-0000-0000-000000000011", name: "Localhost is work", priority: 120, kind: .work, field: .host, operation: .equals, value: "localhost"),
-            rule(id: "20000000-0000-0000-0000-000000000012", name: "127.0.0.1 is work", priority: 120, kind: .work, field: .host, operation: .equals, value: "127.0.0.1"),
-            rule(id: "20000000-0000-0000-0000-000000000013", name: "IPv6 localhost is work", priority: 120, kind: .work, field: .url, operation: .contains, value: "[::1]"),
-            rule(id: "20000000-0000-0000-0000-000000000015", name: "VS Code is work", priority: 200, kind: .work, field: .bundleIdentifier, operation: .equals, value: "com.microsoft.VSCode"),
-            Rule(
-                id: UUID(uuidString: "20000000-0000-0000-0000-000000000014")!,
-                name: "Discord Jian Yang #work is work",
-                priority: 180,
-                enabled: true,
-                isBuiltIn: true,
-                action: RuleAction(kind: .work, categoryID: workCategoryID, projectID: nil),
-                conditions: [
-                    RuleCondition(field: .appName, operation: .contains, value: "Discord"),
-                    RuleCondition(field: .windowTitle, operation: .contains, value: "#work | Jian Yang")
-                ]
-            )
-        ]
-    }
-
-    private static var personalRules: [Rule] {
-        [
-            rule(id: "30000000-0000-0000-0000-000000000001", name: "Notion Calendar is personal", priority: 40, kind: .personal, field: .appName, operation: .contains, value: "Notion Calendar"),
-            rule(id: "30000000-0000-0000-0000-000000000002", name: "calendar.notion.so is personal", priority: 40, kind: .personal, field: .host, operation: .equals, value: "calendar.notion.so"),
-            rule(id: "30000000-0000-0000-0000-000000000003", name: "Finder is personal", priority: 300, kind: .personal, field: .appName, operation: .equals, value: "Finder"),
-            rule(id: "30000000-0000-0000-0000-000000000004", name: "Discord is personal", priority: 300, kind: .personal, field: .appName, operation: .contains, value: "Discord"),
-            rule(id: "30000000-0000-0000-0000-000000000005", name: "Spotify is personal", priority: 300, kind: .personal, field: .appName, operation: .contains, value: "Spotify"),
-            rule(id: "30000000-0000-0000-0000-000000000006", name: "Twitter is personal", priority: 300, kind: .personal, field: .host, operation: .equals, value: "twitter.com"),
-            rule(id: "30000000-0000-0000-0000-000000000007", name: "X is personal", priority: 300, kind: .personal, field: .host, operation: .equals, value: "x.com"),
-            rule(id: "30000000-0000-0000-0000-000000000008", name: "Substack is personal", priority: 300, kind: .personal, field: .host, operation: .contains, value: "substack.com"),
-            rule(id: "30000000-0000-0000-0000-000000000009", name: "YouTube is personal", priority: 300, kind: .personal, field: .host, operation: .equals, value: "youtube.com")
         ]
     }
 

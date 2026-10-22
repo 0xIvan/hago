@@ -3,70 +3,49 @@ import Foundation
 public struct RememberedRuleFactory {
     public init() {}
 
-    public func rule(
-        from segment: ClassifiedSegment,
-        kind: ActivityKind,
-        categoryID: UUID?
-    ) -> Rule? {
-        guard let condition = condition(for: segment.segment.snapshot) else {
-            return nil
-        }
-
-        return Rule(
-            name: "Remember \(condition.value)",
-            priority: 150,
-            enabled: true,
-            isBuiltIn: false,
-            action: RuleAction(
-                kind: kind,
-                categoryID: categoryID,
-                projectID: segment.classification.projectID
-            ),
-            conditions: [condition]
-        )
+    public func rule(from segment: ClassifiedSegment, kind: ActivityKind, categoryID: UUID?) -> Rule? {
+        rules(from: segment, kind: kind, categoryID: categoryID).first
     }
 
-    private func condition(for snapshot: ActivitySnapshot) -> RuleCondition? {
-        // A decision about missing channel context must not become a rule for every Discord channel.
-        guard !snapshot.isDiscordWithoutTitle else { return nil }
-
-        let host = snapshot.host.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !host.isEmpty {
-            return RuleCondition(field: .host, operation: .equals, value: host)
+    public func rules(from segment: ClassifiedSegment, kind: ActivityKind, categoryID: UUID?) -> [Rule] {
+        let snapshot = segment.segment.snapshot
+        guard !snapshot.isPrivate, !snapshot.isDiscordWithoutTitle, kind == .work || kind == .personal else { return [] }
+        let action = RuleAction(kind: kind, categoryID: categoryID, projectID: nil)
+        func make(_ name: String, _ conditions: [RuleCondition]) -> Rule {
+            Rule(name: "Remember \(name)", priority: 150, enabled: true, isBuiltIn: false,
+                 action: action, conditions: conditions, origin: .user)
         }
-
-        if let url = snapshot.url?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
-            return RuleCondition(field: .url, operation: .equals, value: url)
+        if !snapshot.host.isEmpty {
+            let host = RuleCondition(field: .host, operation: .equals, value: snapshot.host)
+            var options: [Rule] = []
+            if let url = snapshot.url, var components = URLComponents(string: url) {
+                components.query = nil
+                components.fragment = nil
+                if let sanitized = components.url?.absoluteString,
+                   sanitized == url, components.path != "", components.path != "/" {
+                    options.append(make("this page", [host, RuleCondition(field: .url, operation: .equals, value: sanitized)]))
+                }
+            }
+            options.append(make("all of \(snapshot.host)", [host]))
+            return options
         }
-
-        if isBrowser(snapshot: snapshot) {
-            return nil
+        let bundle = snapshot.bundleIdentifier
+        guard !bundle.isEmpty, !BrowserCapturePolicy.isBrowser(bundleIdentifier: bundle, appName: snapshot.appName) else { return [] }
+        let app = RuleCondition(field: .bundleIdentifier, operation: .equals, value: bundle)
+        var options: [Rule] = []
+        if !snapshot.windowTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            options.append(make("this title in \(snapshot.appName)", [app, RuleCondition(field: .windowTitle, operation: .equals, value: snapshot.windowTitle)]))
         }
-
-        let windowTitle = snapshot.windowTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !windowTitle.isEmpty {
-            return RuleCondition(field: .windowTitle, operation: .contains, value: windowTitle)
-        }
-
-        let appName = snapshot.appName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !appName.isEmpty else {
-            return nil
-        }
-
-        return RuleCondition(field: .appName, operation: .equals, value: appName)
+        options.append(make("all of \(snapshot.appName)", [app]))
+        return options
     }
+}
 
-    private func isBrowser(snapshot: ActivitySnapshot) -> Bool {
-        let appName = snapshot.appName.lowercased()
-        let bundleIdentifier = snapshot.bundleIdentifier.lowercased()
-
-        return appName.contains("chrome")
-            || appName.contains("safari")
-            || appName.contains("arc")
-            || appName.contains("firefox")
-            || bundleIdentifier.contains("chrome")
-            || bundleIdentifier.contains("safari")
-            || bundleIdentifier.contains("arc")
-            || bundleIdentifier.contains("firefox")
+public enum BrowserCapturePolicy {
+    public static func isBrowser(bundleIdentifier: String, appName: String) -> Bool {
+        let bundle = bundleIdentifier.lowercased()
+        let names = ["google chrome", "safari", "firefox", "arc", "brave browser", "vivaldi", "opera", "microsoft edge", "orion", "zen browser"]
+        let bundles = ["com.google.chrome", "com.apple.safari", "org.mozilla.firefox", "company.thebrowser.browser", "com.brave.browser", "com.vivaldi.vivaldi", "com.operasoftware.opera", "com.microsoft.edgemac", "com.kagi.kagimacos", "app.zen-browser.zen"]
+        return names.contains(appName.lowercased()) || bundles.contains { bundle.hasPrefix($0) }
     }
 }

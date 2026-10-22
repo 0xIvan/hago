@@ -37,10 +37,17 @@ final class AppState: ObservableObject {
     private let reviewAISettingsStore: ReviewAISettingsStore
     private let reviewAIHarnessDiscovery: ReviewAIHarnessDiscovery
     private let formatter = TimeFormatting()
+    @Published var selectedPresetIDs: Set<String> = []
+    @Published var learningSuggestions: [CorrectionLearningSuggestion] = []
+    @Published var latestCorrectionActionID: UUID?
+    @Published var correctionMessage: String?
     private var store: HagoStore?
     private var reviewAIAnalysisService: ReviewAIAnalysisService?
     private var activeReviewIsScheduled = false
     private var timer: Timer?
+    private var captureTask: Task<Void, Never>?
+    private var captureRevision = 0
+    @Published var captureCapabilityLabel = "Checking capture capabilities"
     private var recorder = ActivityRecorder()
     private var pendingCheckpoints: [UUID: ActivitySegment] = [:]
     private var lifecycleObservers: [(NotificationCenter, NSObjectProtocol)] = []
@@ -226,6 +233,9 @@ final class AppState: ObservableObject {
         }
 
         rules = try store.loadRules()
+        selectedPresetIDs = try store.enabledPresetIDs()
+        learningSuggestions = try store.learningSuggestions()
+        latestCorrectionActionID = try store.latestCorrectionActionID()
         ruleReviewRecords = try store.ruleReviewRecords(for: rules)
         categories = try store.loadCategories()
         projects = try store.loadProjects()
@@ -677,17 +687,12 @@ final class AppState: ObservableObject {
 
     func classifyReviewGroup(_ group: AggregatedActivity, as kind: ActivityKind) {
         guard flushTracking() else { return }
-        guard let segment = reviewSegments.first(where: { group.segmentIDs.contains($0.id) }) else { return }
+        guard reviewSegments.contains(where: { group.segmentIDs.contains($0.id) }) else { return }
         let categoryID = categories.first { $0.kind == kind }?.id
 
         do {
-            if let rule = rememberedRuleFactory.rule(from: segment, kind: kind, categoryID: categoryID) {
-                if let ruleID = try store?.saveRememberedRule(rule) {
-                    try store?.reclassify(ruleID: ruleID, scope: .allHistory)
-                }
-            }
-
-            try store?.resolveReviewSegments(ids: group.segmentIDs, kind: kind, categoryID: categoryID)
+            _ = try store?.correctSegments(ids: group.segmentIDs, kind: kind, categoryID: categoryID)
+            correctionMessage = kind == .ignored ? "Selected recordings removed permanently." : "Selected recordings updated. Remember a scope separately to teach Hago."
 
             try refresh()
             clearReviewAISuggestions()
@@ -709,12 +714,7 @@ final class AppState: ObservableObject {
             if kind == .ignored {
                 try store?.ignoreSegment(id: segment.id)
             } else {
-                try store?.overrideSegment(
-                    id: segment.id,
-                    kind: kind,
-                    projectID: segment.classification.projectID,
-                    categoryID: categoryID
-                )
+                _ = try store?.correctSegments(ids: [segment.id], kind: kind, categoryID: categoryID)
             }
 
             try refresh()
@@ -723,6 +723,54 @@ final class AppState: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func setEnabledPresets(_ ids: Set<String>) {
+        guard flushTracking() else { return }
+        do {
+            try store?.setEnabledPresetIDs(ids)
+            try refresh()
+            clearReviewAISuggestions()
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func classificationExplanation(for entry: ClassifiedSegment) -> String {
+        (try? store?.classificationExplanation(for: entry)) ?? "Classification reason unavailable"
+    }
+
+    func previewRememberedRule(_ rule: Rule) throws -> RuleImpactPreview {
+        guard let store else { throw HagoStoreError.missingDatabase }
+        return try store.previewRememberedRule(rule)
+    }
+
+    func rememberRule(_ rule: Rule) {
+        guard flushTracking() else { return }
+        do {
+            _ = try store?.applyRememberedRule(rule)
+            correctionMessage = "Rule remembered. Existing explicit corrections and project assignments were preserved."
+            try refresh()
+            clearReviewAISuggestions()
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func undoLatestCorrection() {
+        guard flushTracking(), let id = latestCorrectionActionID else { return }
+        do {
+            let count = try store?.undoCorrection(id: id) ?? 0
+            correctionMessage = "Undid the last correction or learned rule (\(count) retained recordings restored). Later choices are preserved."
+            try refresh()
+            clearReviewAISuggestions()
+            errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func dismissLearningSuggestion(_ suggestion: CorrectionLearningSuggestion) {
+        do {
+            try store?.dismissLearningSuggestion(suggestion)
+            try refresh()
+        } catch { errorMessage = error.localizedDescription }
     }
 
     private func clearReviewAISuggestions() {
@@ -783,6 +831,9 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func flushTracking() -> Bool {
+        captureRevision += 1
+        captureTask?.cancel()
+        captureTask = nil
         enqueue(recorder.observe(nil, at: Date(), uptime: ProcessInfo.processInfo.systemUptime))
         return persistCheckpoints()
     }
@@ -864,6 +915,9 @@ final class AppState: ObservableObject {
         refreshLoginItemStatus()
         let now = Date()
         if isTrackingPaused || !suspensionReasons.isEmpty {
+            captureRevision += 1
+            captureTask?.cancel()
+            captureTask = nil
             enqueue(recorder.observe(nil, at: now, uptime: ProcessInfo.processInfo.systemUptime))
             persistCheckpoints()
             currentSnapshot = nil
@@ -872,13 +926,28 @@ final class AppState: ObservableObject {
             return
         }
         checkScheduledReview()
-        let snapshot = reader.currentSnapshot()
+        captureCapabilityLabel = reader.captureCapabilityLabel()
+        guard captureTask == nil else { return }
+        let revision = captureRevision
+        captureTask = Task { [weak self] in
+            guard let self else { return }
+            let snapshot = await reader.currentSnapshot()
+            guard !Task.isCancelled, revision == captureRevision else { return }
+            captureTask = nil
+            guard !isTrackingPaused, suspensionReasons.isEmpty else { return }
+            let foregroundPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            let valid = snapshot.flatMap { $0.processIdentifier == foregroundPID ? $0 : nil }
+            recordObservation(valid)
+        }
+    }
+
+    private func recordObservation(_ snapshot: ActivitySnapshot?) {
         let classification = snapshot.map { classifier.classify(snapshot: $0, rules: rules) }
         let retained = classification?.kind == .ignored ? nil : snapshot
         let contextChanged = recorder.current?.snapshot.normalizedSignature != retained?.normalizedSignature
         currentSnapshot = retained
         currentClassification = classification
-        enqueue(recorder.observe(retained, at: now, uptime: ProcessInfo.processInfo.systemUptime))
+        enqueue(recorder.observe(retained, at: Date(), uptime: ProcessInfo.processInfo.systemUptime))
         let saved = persistCheckpoints()
         if saved && contextChanged { reload() }
         currentStateLabel = saved

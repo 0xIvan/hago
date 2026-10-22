@@ -88,6 +88,13 @@ public struct RuleAction: Equatable, Codable, Sendable {
     }
 }
 
+public enum ClassificationRuleOrigin: String, Codable, Sendable {
+    case legacy
+    case user
+    case preset
+    case ai
+}
+
 public struct Rule: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var name: String
@@ -96,6 +103,9 @@ public struct Rule: Identifiable, Equatable, Codable, Sendable {
     public var isBuiltIn: Bool
     public var action: RuleAction
     public var conditions: [RuleCondition]
+    public var origin: ClassificationRuleOrigin?
+    public var presetID: String?
+    public var parentRuleID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -104,7 +114,10 @@ public struct Rule: Identifiable, Equatable, Codable, Sendable {
         enabled: Bool,
         isBuiltIn: Bool,
         action: RuleAction,
-        conditions: [RuleCondition]
+        conditions: [RuleCondition],
+        origin: ClassificationRuleOrigin? = nil,
+        presetID: String? = nil,
+        parentRuleID: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -113,6 +126,9 @@ public struct Rule: Identifiable, Equatable, Codable, Sendable {
         self.isBuiltIn = isBuiltIn
         self.action = action
         self.conditions = conditions
+        self.origin = origin
+        self.presetID = presetID
+        self.parentRuleID = parentRuleID
     }
 }
 
@@ -159,8 +175,10 @@ public struct ClassificationResult: Equatable, Sendable {
     public var categoryID: UUID?
     public var projectID: UUID?
     public var ruleID: UUID?
+    public var reason: String
 
-    public init(kind: ActivityKind, categoryID: UUID?, projectID: UUID?, ruleID: UUID?) {
+    public init(kind: ActivityKind, categoryID: UUID?, projectID: UUID?, ruleID: UUID?, reason: String = "Needs context") {
+        self.reason = reason
         self.kind = kind
         self.categoryID = categoryID
         self.projectID = projectID
