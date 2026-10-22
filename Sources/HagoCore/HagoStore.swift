@@ -2407,6 +2407,8 @@ extension HagoStore {
                 try execute("CREATE TABLE learning_dismissals(context_key TEXT PRIMARY KEY, evidence_key TEXT NOT NULL)")
                 if !existing { try seedIfNeeded() }
                 try execute("UPDATE rules SET is_built_in=0 WHERE id='20000000-0000-0000-0000-000000000014'")
+                try execute("UPDATE categories SET name='Needs review' WHERE id=? AND name IN ('Review', 'Needs Review')",
+                            bindings: [.text(SeedData.reviewCategoryID.uuidString)])
                 try execute("PRAGMA user_version=1")
             }
         } catch {

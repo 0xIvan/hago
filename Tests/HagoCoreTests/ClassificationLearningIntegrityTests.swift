@@ -12,6 +12,9 @@ struct ClassificationLearningIntegrityTests {
         let customID = UUID()
         let date = Date().timeIntervalSince1970
         try sql(url, """
+            CREATE TABLE categories(id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, color_hex TEXT NOT NULL);
+            INSERT INTO categories VALUES ('33333333-3333-3333-3333-333333333333','Needs Review','review','#D97706');
+            INSERT INTO categories VALUES ('44444444-4444-4444-4444-444444444444','Needs Review','review','#000000');
             CREATE TABLE activity_segments(id TEXT PRIMARY KEY, started_at REAL, ended_at REAL, app_name TEXT, bundle_id TEXT, process_id INTEGER, window_title TEXT, url TEXT, source TEXT);
             CREATE TABLE rules(id TEXT PRIMARY KEY, name TEXT, priority INTEGER, enabled INTEGER, is_built_in INTEGER, action_kind TEXT, category_id TEXT, project_id TEXT);
             CREATE TABLE classifications(segment_id TEXT PRIMARY KEY REFERENCES activity_segments(id) ON DELETE CASCADE, kind TEXT, category_id TEXT, project_id TEXT, rule_id TEXT REFERENCES rules(id) ON DELETE SET NULL, is_manual INTEGER);
@@ -22,6 +25,9 @@ struct ClassificationLearningIntegrityTests {
             """)
         let store = try HagoStore(databaseURL: url)
         let rules = try store.loadRules()
+        let categories = try store.loadCategories()
+        #expect(categories.first { $0.id == SeedData.reviewCategoryID }?.name == "Needs review")
+        #expect(categories.first { $0.id != SeedData.reviewCategoryID }?.name == "Needs Review")
         #expect(rules.first?.id == customID)
         #expect(rules.first?.origin == .legacy)
         #expect(rules.first(where: { $0.name == "Old Discord" })?.isBuiltIn == false)
@@ -32,8 +38,10 @@ struct ClassificationLearningIntegrityTests {
         let backup = try #require(FileManager.default.contentsOfDirectory(at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil).first { $0.lastPathComponent.contains("pre-v1-") })
         let restored = url.deletingLastPathComponent().appendingPathComponent("restored.sqlite")
         try FileManager.default.copyItem(at: backup, to: restored)
+        try sql(restored, "UPDATE categories SET name='My pending time' WHERE id='33333333-3333-3333-3333-333333333333'")
         let restoredStore = try HagoStore(databaseURL: restored)
         #expect(try restoredStore.recentSegments(limit: 1).first?.classification == entry.classification)
+        #expect(try restoredStore.loadCategories().first { $0.id == SeedData.reviewCategoryID }?.name == "My pending time")
     }
 
     @Test
