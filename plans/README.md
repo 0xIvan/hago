@@ -11,9 +11,17 @@ checkpoint language in individual plans.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
 | 001 | Add local AI harness selection and safe Review automation | P1 | L | - | DONE |
-| [002](002-reliable-tracking-and-personal-classification.md) | Reliable tracking and personal classification blueprint | P0 | L, staged | Reuses 001 | IN PROGRESS |
+| [002](002-reliable-tracking-and-personal-classification.md) | Reliable tracking and personal classification | P0 | L, staged | Reuses 001 | IN PROGRESS |
 
 Status values: TODO, IN PROGRESS, DONE, BLOCKED, or REJECTED.
+
+Plan 002's recording, classification, presets, correction learning, onboarding,
+optional direct AI and release/update code are integrated. The arm64 0.2.0
+candidate from source `7b9cae6` is Developer ID signed, notarized, installed,
+and has a verified signed appcast. Status remains IN PROGRESS for installed UI,
+two-version update and full OS/fresh-machine qualification; see the delivery
+evidence in Plan 002 and [distribution qualification](release-qualification.md).
+No public release/feed was published.
 
 ## Dependency notes
 
