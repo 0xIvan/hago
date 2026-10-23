@@ -16,6 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         observeAppearance()
         statusBarController = StatusBarController(appState: appState)
+        if appState.workProfileStore.needsSetup {
+            DispatchQueue.main.async { [appState] in
+                appState.openDashboardWindow()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

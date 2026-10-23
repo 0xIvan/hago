@@ -53,13 +53,19 @@ final class WorkProfileStore: ObservableObject {
 struct DetectedWorkApp: Identifiable {
     var id: String
     var name: String
+    var url: URL
+
+    @MainActor
+    var icon: NSImage {
+        NSWorkspace.shared.icon(forFile: url.path)
+    }
 
     @MainActor
     static func installed() -> [Self] {
         let bundleIDs = ["com.apple.dt.Xcode", "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.figma.Desktop", "com.tinyspeck.slackmacgap", "com.hnc.Discord", "com.apple.Terminal", "com.mitchellh.ghostty", "com.apple.mail", "com.googlecode.iterm2", "notion.id", "com.microsoft.teams2", "us.zoom.xos"]
         return bundleIDs.compactMap { id in
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { return nil }
-            return Self(id: id, name: FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: ""))
+            return Self(id: id, name: FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: ""), url: url)
         }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 }

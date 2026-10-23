@@ -48,6 +48,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 }
             )
             .environmentObject(appState)
+            .environmentObject(appState.workProfileStore)
         )
         contentView.frame.size = contentView.fittingSize
         menuContentView = contentView
@@ -106,7 +107,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     </svg>
     """
 
-    private static func activityTraceImage() -> NSImage? {
+    static func activityTraceImage() -> NSImage? {
         guard let data = activityTraceSVG.data(using: .utf8),
               let image = NSImage(data: data) else {
             return nil

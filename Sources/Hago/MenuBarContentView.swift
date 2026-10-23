@@ -4,6 +4,7 @@ import HagoCore
 
 struct MenuBarContentView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var profileStore: WorkProfileStore
     @Environment(\.colorScheme) private var colorScheme
 
     var openSettings: () -> Void = {}
@@ -14,7 +15,12 @@ struct MenuBarContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            if !appState.accessibilityTrusted {
+            if !profileStore.profile.completed {
+                SetupReminderCard {
+                    profileStore.needsSetup = true
+                    openSettings()
+                }
+            } else if !appState.accessibilityTrusted {
                 Button("Grant Accessibility Access…") { appState.requestAccessibilityPermission() }
                     .help("Allow window context recognition. App-level tracking remains available.")
             }
