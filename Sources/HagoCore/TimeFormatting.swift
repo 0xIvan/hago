@@ -20,7 +20,7 @@ public struct TimeFormatting {
         let hours = seconds / 3_600
         let minutes = (seconds % 3_600) / 60
 
-        return "\(hours)h\(String(format: "%02d", minutes))"
+        return "\(hours):\(String(format: "%02d", minutes))"
     }
 
     public func decimalHours(_ duration: TimeInterval) -> Double {

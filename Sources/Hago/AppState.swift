@@ -114,7 +114,7 @@ final class AppState: ObservableObject {
         let workDuration = formatter.menuBarWorkDuration(todaySummary.workSeconds)
         let totalDuration = formatter.menuBarWorkDuration(todayTrackedSeconds)
 
-        return "\(workDuration) · \(totalDuration)"
+        return "\(workDuration) | \(totalDuration)"
     }
 
     var menuBarAccessibilityLabel: String {
