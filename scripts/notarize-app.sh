@@ -66,6 +66,6 @@ fi
 STATUS="$(printf '%s' "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
 [[ "$STATUS" == "Accepted" ]] || { echo "Notarization was not accepted: $STATUS" >&2; exit 1; }
 
-xcrun stapler staple "$APP_DIR"
-xcrun stapler validate "$APP_DIR"
+bash "$ROOT_DIR/scripts/stapler.sh" staple "$APP_DIR"
+bash "$ROOT_DIR/scripts/stapler.sh" validate "$APP_DIR"
 spctl --assess --type execute --verbose "$APP_DIR"

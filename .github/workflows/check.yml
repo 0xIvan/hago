@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - name: Validate scripts and metadata
         run: |
-          bash -n scripts/appcast.sh scripts/install-release.sh scripts/notarize-app.sh scripts/package-dmg.sh scripts/release.sh scripts/sparkle.sh
+          bash -n scripts/appcast.sh scripts/install-release.sh scripts/notarize-app.sh scripts/package-dmg.sh scripts/release.sh scripts/sparkle.sh scripts/stapler.sh
           zsh -n scripts/install-app.sh scripts/package-app.sh
           plutil -lint Resources/Info.plist Resources/Hago.entitlements
           git diff --check

@@ -110,8 +110,8 @@ jobs:
           dmg="outputs/Hago-$HAGO_VERSION-universal.dmg"
           xcrun notarytool submit "$dmg" --keychain-profile "$HAGO_NOTARY_PROFILE" --wait --output-format json > outputs/dmg-notarization.json
           python3 -c 'import json; assert json.load(open("outputs/dmg-notarization.json"))["status"] == "Accepted"'
-          xcrun stapler staple "$dmg"
-          xcrun stapler validate "$dmg"
+          bash scripts/stapler.sh staple "$dmg"
+          bash scripts/stapler.sh validate "$dmg"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
           hdiutil verify "$dmg"
       - name: Generate and verify signed Sparkle feed
