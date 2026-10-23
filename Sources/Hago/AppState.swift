@@ -31,6 +31,7 @@ final class AppState: ObservableObject {
     @Published var projects: [Project] = []
     @Published var errorMessage: String?
     @Published var accessibilityTrusted = false
+    @Published private(set) var isRelaunching = false
     @Published private(set) var accessibilityRequest = AccessibilityRequest.notRequested
     @Published var selectedSection: HagoSection = .overview
     @Published var selectedSettingsSection: HagoSection = .profile
@@ -63,6 +64,7 @@ final class AppState: ObservableObject {
     @Published var loginItemError: String?
     private var visibleAppWindows: Set<String> = []
     private var dashboardWindow: NSWindow?
+    private var relaunchShouldResumeOnboarding = false
     private var reviewAIRevision = 0
     private var reviewAIAnalysisTask: Task<Void, Never>?
     private let pollInterval: TimeInterval = 5
@@ -291,16 +293,34 @@ final class AppState: ObservableObject {
     }
 
     func relaunch() {
-        let script = "while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do sleep 0.2; done; open \"$0\""
+        guard !isRelaunching, flushTracking() else { return }
+        isRelaunching = true
+        relaunchShouldResumeOnboarding = workProfileStore.needsSetup
+        if workProfileStore.needsSetup {
+            workProfileStore.needsSetup = false
+        } else {
+            relaunchAfterOnboardingDismissal()
+        }
+    }
+
+    func relaunchAfterOnboardingDismissal() {
+        guard isRelaunching else { return }
+        let script = "for attempt in $(seq 1 300); do if ! kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; then exec /usr/bin/open \"$0\"; fi; sleep 0.2; done"
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", script, Bundle.main.bundlePath]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         do {
             try process.run()
             NSApp.terminate(nil)
+            if process.isRunning { process.terminate() }
         } catch {
             errorMessage = error.localizedDescription
         }
+        isRelaunching = false
+        workProfileStore.needsSetup = relaunchShouldResumeOnboarding
     }
 
     func refresh() throws {

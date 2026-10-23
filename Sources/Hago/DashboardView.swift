@@ -19,7 +19,7 @@ struct DashboardView: View {
                 .navigationTitle(appState.selectedSection.title)
         }
         .background(WindowLifecycleView(id: "dashboard"))
-        .sheet(isPresented: $profileStore.needsSetup) {
+        .sheet(isPresented: $profileStore.needsSetup, onDismiss: appState.relaunchAfterOnboardingDismissal) {
             OnboardingView().environmentObject(appState).environmentObject(profileStore)
         }
         .onChange(of: appState.selectedSection) { _, _ in appState.reload() }

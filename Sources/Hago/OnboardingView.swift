@@ -170,6 +170,7 @@ struct OnboardingView: View {
                         Spacer()
                         Button("Reopen Hago") { appState.relaunch() }
                             .controlSize(.small)
+                            .disabled(appState.isRelaunching)
                     }
                     .padding(.leading, 42)
                     .padding(.bottom, 10)
