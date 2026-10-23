@@ -68,8 +68,12 @@ final class AppState: ObservableObject {
     private var reviewAIRevision = 0
     private var reviewAIAnalysisTask: Task<Void, Never>?
     private let pollInterval: TimeInterval = 5
+    private static let accessibilityRequestedKey = "hago.accessibilityPermissionRequested"
 
     init() {
+        if UserDefaults.standard.bool(forKey: Self.accessibilityRequestedKey) {
+            accessibilityRequest = .stillOffAfterSettings
+        }
         let settingsStore = ReviewAISettingsStore()
         reviewAISettingsStore = settingsStore
         reviewAISettings = settingsStore.load()
@@ -272,19 +276,28 @@ final class AppState: ObservableObject {
     func requestAccessibilityPermission() {
         refreshAccessibilityTrust()
         guard !accessibilityTrusted else { return }
-        if accessibilityRequest == .notRequested {
+        let shouldPrompt = accessibilityRequest == .notRequested
+        accessibilityRequest = .waitingForSettings
+        UserDefaults.standard.set(true, forKey: Self.accessibilityRequestedKey)
+        if shouldPrompt {
             reader.requestAccessibilityPermission()
         } else {
             // Prompting again while Hago is already listed turns its switch back off in System Settings.
             openAccessibilitySettings()
         }
-        accessibilityRequest = .waitingForSettings
     }
 
     func refreshAccessibilityTrust() {
         let trusted = reader.accessibilityIsTrusted()
         if trusted != accessibilityTrusted { accessibilityTrusted = trusted }
-        if trusted, accessibilityRequest != .notRequested { accessibilityRequest = .notRequested }
+        if trusted {
+            if accessibilityRequest != .granted { accessibilityRequest = .granted }
+            if !UserDefaults.standard.bool(forKey: Self.accessibilityRequestedKey) {
+                UserDefaults.standard.set(true, forKey: Self.accessibilityRequestedKey)
+            }
+        } else if accessibilityRequest == .granted {
+            accessibilityRequest = .stillOffAfterSettings
+        }
     }
 
     func openAccessibilitySettings() {
@@ -1137,4 +1150,5 @@ enum AccessibilityRequest {
     case notRequested
     case waitingForSettings
     case stillOffAfterSettings
+    case granted
 }

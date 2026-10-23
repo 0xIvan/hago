@@ -107,6 +107,7 @@ struct ActiveWindowReader {
     }
 
     private static func accessibilityWindowTitle(processIdentifier: pid_t) -> String? {
+        guard AXIsProcessTrusted() else { return nil }
         let appElement = AXUIElementCreateApplication(processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, 0.5)
         var focusedWindow: CFTypeRef?
