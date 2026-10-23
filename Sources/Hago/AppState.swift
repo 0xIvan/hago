@@ -31,6 +31,7 @@ final class AppState: ObservableObject {
     @Published var projects: [Project] = []
     @Published var errorMessage: String?
     @Published var accessibilityTrusted = false
+    @Published private(set) var accessibilityRequest = AccessibilityRequest.notRequested
     @Published var selectedSection: HagoSection = .overview
     @Published var selectedSettingsSection: HagoSection = .profile
 
@@ -267,8 +268,39 @@ final class AppState: ObservableObject {
     }
 
     func requestAccessibilityPermission() {
-        reader.requestAccessibilityPermission()
-        accessibilityTrusted = reader.accessibilityIsTrusted()
+        refreshAccessibilityTrust()
+        guard !accessibilityTrusted else { return }
+        if accessibilityRequest == .notRequested {
+            reader.requestAccessibilityPermission()
+        } else {
+            // Prompting again while Hago is already listed turns its switch back off in System Settings.
+            openAccessibilitySettings()
+        }
+        accessibilityRequest = .waitingForSettings
+    }
+
+    func refreshAccessibilityTrust() {
+        let trusted = reader.accessibilityIsTrusted()
+        if trusted != accessibilityTrusted { accessibilityTrusted = trusted }
+        if trusted, accessibilityRequest != .notRequested { accessibilityRequest = .notRequested }
+    }
+
+    func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func relaunch() {
+        let script = "while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do sleep 0.2; done; open \"$0\""
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script, Bundle.main.bundlePath]
+        do {
+            try process.run()
+            NSApp.terminate(nil)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func refresh() throws {
@@ -291,7 +323,7 @@ final class AppState: ObservableObject {
         lastReviewAIRunSummary = try store.mostRecentReviewAIRun(appliedRulesOnly: true) ?? store.mostRecentReviewAIRun()
         activitySegments = try store.activitySegments(for: activityDate)
         recentSegments = try store.recentSegments(limit: 20)
-        accessibilityTrusted = reader.accessibilityIsTrusted()
+        refreshAccessibilityTrust()
         chromeAutomationGranted = reader.chromeAutomationIsGranted()
         reviewAISuggestions = try reviewAIAnalysisService?.savedSuggestions(context: reviewAIAnalysisContext) ?? []
     }
@@ -946,6 +978,29 @@ final class AppState: ObservableObject {
             }
             lifecycleObservers.append((distributed, token))
         }
+        let accessibilityToken = distributed.addObserver(
+            forName: Notification.Name("com.apple.accessibility.api"), object: nil, queue: .main
+        ) { [weak self] _ in
+            // The trust list notification can arrive before AXIsProcessTrusted reflects the change.
+            for delay in [0.3, 1.5] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    MainActor.assumeIsolated { self?.refreshAccessibilityTrust() }
+                }
+            }
+        }
+        lifecycleObservers.append((distributed, accessibilityToken))
+        let activationToken = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.refreshAccessibilityTrust()
+                if !self.accessibilityTrusted, self.accessibilityRequest == .waitingForSettings {
+                    self.accessibilityRequest = .stillOffAfterSettings
+                }
+            }
+        }
+        lifecycleObservers.append((NotificationCenter.default, activationToken))
     }
 
     private func setSuspended(_ reason: String, suspended: Bool) {
@@ -969,7 +1024,7 @@ final class AppState: ObservableObject {
     }
 
     private func tick() {
-        accessibilityTrusted = reader.accessibilityIsTrusted()
+        refreshAccessibilityTrust()
         refreshLoginItemStatus()
         let now = Date()
         if isTrackingPaused || !suspensionReasons.isEmpty {
@@ -1056,4 +1111,10 @@ enum ReviewAIAnalysisState: Equatable {
     case analyzing
     case completed
     case failed(String)
+}
+
+enum AccessibilityRequest {
+    case notRequested
+    case waitingForSettings
+    case stillOffAfterSettings
 }

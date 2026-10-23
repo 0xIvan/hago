@@ -158,7 +158,21 @@ struct OnboardingView: View {
                     detail: "Tell documents and projects apart",
                     isGranted: appState.accessibilityTrusted
                 ) {
-                    Button("Allow…") { appState.requestAccessibilityPermission() }
+                    Button(appState.accessibilityRequest == .notRequested ? "Allow…" : "Open Settings…") {
+                        appState.requestAccessibilityPermission()
+                    }
+                }
+                if !appState.accessibilityTrusted, appState.accessibilityRequest == .stillOffAfterSettings {
+                    HStack(spacing: 8) {
+                        Text("Already turned on? Reopen Hago to apply it.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Reopen Hago") { appState.relaunch() }
+                            .controlSize(.small)
+                    }
+                    .padding(.leading, 42)
+                    .padding(.bottom, 10)
                 }
                 if hasChrome {
                     Divider().padding(.leading, 42)
@@ -182,6 +196,13 @@ struct OnboardingView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.top, 10)
+        }
+        .task {
+            // System Settings changes the grant outside Hago; poll while this step is visible.
+            while !Task.isCancelled, !appState.accessibilityTrusted {
+                appState.refreshAccessibilityTrust()
+                try? await Task.sleep(for: .seconds(1))
+            }
         }
     }
 
