@@ -14,34 +14,31 @@ main produces candidate artifacts without publishing. Published releases cannot
 be overwritten, older versions/builds are rejected, and release jobs serialize.
 Local installs retain the installed certificate; distribution uses Developer ID.
 
-1. Set `HAGO_VERSION` to a stable three-part version and `HAGO_BUILD_NUMBER` to a
-   strictly increasing build number. Build/package, then run notarize-app.sh
-   using an existing authorized Developer ID/notary configuration. Never place
-   credential values in source or command history.
-2. Run `scripts/package-dmg.sh outputs/Hago.app outputs`. Notarize and staple
-   the DMG too, then regenerate checksums after stapling. A locally signed DMG
-   without these tickets is not a notarized release.
-3. Run `scripts/appcast.sh outputs/Hago.app outputs/Hago-VERSION-ARCH.dmg NOTES.md`
-   locally. This uses the Hago Keychain signing account, with no private-key
-   export. Cryptographic verification checks the appcast signature against the
-   public key shipped in the app and validates version, URL and archive length.
-4. Qualify an old-to-new update using a private test feed and both signed,
-   notarized builds; check offline, current/newer versions and a missing feed.
-   Sparkle provides user-facing errors and version comparisons. Automatic checks,
-   profiling and downloads are disabled; Check for Updates is user initiated.
-5. Verify a fresh downloaded install under Gatekeeper, permissions, login choice,
+1. Normal releases follow main checks, an atomic version/build bump plus tag,
+   and explicit tag dispatch. Hago's own CI signs/notarizes and publishes after
+   verification. Use `HAGO_AUTO_RELEASE=false` to pause this flow.
+2. Dispatch Release on main to build a candidate without publishing. Source
+   version/build in Resources/Info.plist are authoritative. Candidate artifacts
+   include a universal DMG/ZIP, signed appcast, final checksums and notary receipt.
+3. For a local/emergency package, build with HAGO_ARCHS="arm64 x86_64", notarize
+   and staple the app before packaging, then notarize/staple the DMG. Regenerate
+   checksums after stapling. A locally signed DMG without these tickets is not a
+   notarized release. Local appcast signing uses the Hago Keychain account.
+4. Appcast verification checks version, build, immutable download URL, archive
+   length and Ed25519 signature against the public key shipped in the app.
+   Never substitute another app's key. Publishing fails closed on a mismatch.
+5. Exercise update discovery with an older/current host and a failed endpoint;
+   then qualify an actual interactive update install. A successful SDK probe is
+   not proof of the installation, relaunch and permission-continuity UI.
+6. Verify a fresh downloaded install under Gatekeeper, permissions, login choice,
    database migration/backup recovery and tracking after real sleep/lock/login.
    Build and notarization success alone do not establish these behaviors.
-6. After explicit public release authorization, publish the verified versioned
-   DMG, ZIP, final checksums and locally signed `appcast.xml` together in the
-   matching GitHub `vVERSION` release. The first published appcast establishes
-   the production feed; before then Check for Updates reports a feed error.
 
 Do not overwrite artifacts or increment the released appcast independently of
 its verified DMG. The terminal install script is a legacy path; direct users to
 the signed/notarized DMG. An appcast signing failure blocks publishing.
 
-Bundle identity is `com.ivan.hago` (0.2.0, build 2). Before loading settings,
+Bundle identity has been `com.ivan.hago` since 0.2.0, build 2. Before loading settings,
 legacy `local.hago.app` preferences are copied once, preserving any already-set
 new-domain values and leaving the old domain intact. The database path is
 unchanged. macOS treats the new bundle identity as a new privacy principal:
@@ -51,3 +48,32 @@ may need re-registration after changing identity; never silently enable it.
 New permanent preference tests protect against an upgrade resetting user choices
 or an interrupted onboarding losing stable rule identities. Broader presentation
 and packaging checks remain temporary rather than adding brittle UI tests.
+
+## Pipeline qualification — 2026-10-23
+
+- Hago CI check run https://github.com/0xIvan/hago/actions/runs/39915797280
+  passed on source `367f5ba`. All 148 tests pass locally and in CI. A strict
+  capture in Accessibility notification refresh was made compatible with the
+  older CI Swift compiler without changing permission behavior.
+- Candidate run https://github.com/0xIvan/hago/actions/runs/39915805860 passed
+  with Hago's own six signing secrets: both architectures built, app and DMG
+  accepted by Apple, tickets stapled, Gatekeeper accepted, appcast signed and
+  verified, candidate artifacts saved, temporary signing material removed.
+  Both publication steps were correctly skipped on dispatch from main.
+- Downloaded candidate checksums and appcast signature verify locally; DMG
+  Gatekeeper assessment reports Notarized Developer ID. No local database or
+  activity records are included in release assets.
+- Temporary Sparkle SDK probes using isolated bundle identifiers and a local
+  copy of the signed candidate feed produced update available for build 1,
+  up to date for build 2, and an error for an unreachable endpoint. They did
+  not show or install updates, access the activity DB, or alter Hago settings.
+- Temporary Git fixtures verified dry run, dirty/stale checkout refusal,
+  nonincreasing version refusal, and the atomic default-branch/tag push.
+  Installer fixtures preserved the previous app on checksum/signature failures.
+  Workflow lint, shell checks and source diff checks pass.
+- Automatic main releases are enabled only after this candidate qualification.
+  Public delivery is subsequently verified against the live latest-feed URL,
+  immutable release download, checksum and the app's bundled trust key.
+- Native UI control timed out; interactive Sparkle installation and full
+  fresh-machine/Intel runtime/real login or sleep transitions remain separate
+  app qualification. Universal compilation is not an Intel runtime test.
