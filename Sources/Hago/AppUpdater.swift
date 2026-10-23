@@ -36,19 +36,26 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 }
 
-struct UpdateSettingsView: View {
+struct UpdateSettingsSection: View {
     @ObservedObject var updater: AppUpdater
+
     var body: some View {
-        GroupBox("Updates") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")")
+        Section {
+            LabeledContent("Installed version") {
+                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")
+            }
+            LabeledContent("Software updates") {
                 Button("Check for Updates…") { updater.checkForUpdates() }
                     .disabled(!updater.canCheckForUpdates)
-                Text(updater.isConfigured
-                     ? "Checks are manual. Sparkle contacts the public Hago update feed on GitHub, verifies signed updates, and asks before downloading or installing. No activity or profile data is sent."
-                     : "Updates are not configured in this local build. A Hago update signing key and published feed are required before distribution.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }.padding(6).frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } header: {
+            Text("Updates")
+        } footer: {
+            Text(updater.isConfigured
+                 ? "Checks are manual. Sparkle contacts the public Hago update feed on GitHub, verifies signed updates, and asks before downloading or installing. No activity or profile data is sent."
+                 : "Updates are not configured in this local build. A Hago update signing key and published feed are required before distribution.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }

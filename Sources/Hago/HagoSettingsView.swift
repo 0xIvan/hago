@@ -2,7 +2,6 @@ import SwiftUI
 
 struct HagoSettingsView: View {
     @EnvironmentObject private var appState: AppState
-    @EnvironmentObject private var profileStore: WorkProfileStore
     @State private var selection: HagoSection? = .profile
 
     var body: some View {
@@ -19,19 +18,9 @@ struct HagoSettingsView: View {
                 case .categories: CategoriesSettingsView()
                 case .privacy: PrivacySettingsView()
                 case .aiReview: ReviewAISettingsView()
-                default:
-                    ScrollView {
-                        VStack(spacing: 20) {
-                            TrackingSettingsPanel()
-                            UpdateSettingsView(updater: appState.updater)
-                            Button("Resume Setup…") {
-                                profileStore.needsSetup = true
-                                appState.openDashboardWindow()
-                            }
-                        }.padding(20)
-                    }
+                default: TrackingSettingsView()
                 }
-            }.padding(selection == .profile ? 0 : 20)
+            }.padding(selection == .profile || selection == .tracking ? 0 : 20)
         }
         .frame(minWidth: 850, minHeight: 650)
         .background(WindowLifecycleView(id: "settings"))

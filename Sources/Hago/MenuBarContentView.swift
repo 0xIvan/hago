@@ -21,7 +21,7 @@ struct MenuBarContentView: View {
                     openSettings()
                 }
             } else if !appState.accessibilityTrusted {
-                Button("Grant Accessibility Access…") { appState.requestAccessibilityPermission() }
+                MenuActionButton(title: "Grant Accessibility Access…") { appState.requestAccessibilityPermission() }
                     .help("Allow window context recognition. App-level tracking remains available.")
             }
             metrics
@@ -33,10 +33,12 @@ struct MenuBarContentView: View {
                     .foregroundStyle(.red)
             }
 
-            Button(appState.isTrackingPaused ? "Resume Tracking" : "Pause Tracking") {
+            MenuActionButton(
+                title: appState.isTrackingPaused ? "Resume Tracking" : "Pause Tracking",
+                symbol: appState.isTrackingPaused ? "play" : "pause"
+            ) {
                 appState.toggleTracking()
             }
-            .controlSize(.small)
 
             if appState.reviewAISettings.scheduleEnabled,
                appState.reviewAIScheduleState.consecutiveFailures >= 3 {
@@ -175,23 +177,11 @@ struct MenuBarContentView: View {
 
     private var actions: some View {
         HStack(spacing: 8) {
-            Button {
-                openSettings()
-            } label: {
-                Label("Open Hago", systemImage: "macwindow")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
+            MenuActionButton(title: "Open Hago", symbol: "macwindow", action: openSettings)
             Spacer()
-
-            Button {
+            MenuActionButton(title: "Quit", symbol: "power", bordered: false) {
                 NSApp.terminate(nil)
-            } label: {
-                Label("Quit", systemImage: "power")
             }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
         }
     }
 
@@ -208,5 +198,47 @@ struct MenuBarContentView: View {
         case nil:
             .secondary
         }
+    }
+}
+
+/// The same AppKit push button Uso and MacMirrorly use in their menus; SwiftUI's bordered style renders shorter and squarer there.
+private struct MenuActionButton: NSViewRepresentable {
+    @Environment(\.isEnabled) private var isEnabled
+    let title: String
+    var symbol: String?
+    var bordered = true
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(title: title, target: context.coordinator, action: #selector(Coordinator.performAction))
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        button.imageHugsTitle = true
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+        button.title = title
+        button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        button.isEnabled = isEnabled
+        button.isBordered = bordered
+        button.contentTintColor = bordered ? nil : .secondaryLabelColor
+        button.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }?
+            .withSymbolConfiguration(.init(pointSize: NSFont.smallSystemFontSize, weight: .regular))
+        button.imagePosition = symbol == nil ? .noImage : .imageLeading
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSButton, context: Context) -> CGSize? {
+        nsView.intrinsicContentSize
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func performAction() { action() }
     }
 }
