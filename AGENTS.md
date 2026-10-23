@@ -21,7 +21,7 @@
 - Main branch: `main`.
 - Commit messages should match the existing concise style, for example `Make report panels fill width`.
 - Do not add co-author tags.
-- The user often expects changes to be committed and pushed after verification when implementing app changes.
+- After verifying authorized app changes, commit, push, and publish through the release workflow by default. Follow the release through successful publication unless the user explicitly limits the task to local work, review, or planning.
 - If unrelated uncommitted changes exist, do not overwrite or revert them. Work around them and mention them.
 
 ## Product Rules

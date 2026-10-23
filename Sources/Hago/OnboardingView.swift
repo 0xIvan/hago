@@ -6,7 +6,6 @@ struct OnboardingView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var profileStore: WorkProfileStore
     @Environment(\.openSettings) private var openSettings
-    @State private var apps: [DetectedWorkApp] = []
     @State private var hasChrome = false
     @State private var showsWorkSites = false
     @State private var error: String?
@@ -48,7 +47,6 @@ struct OnboardingView: View {
         }
         .frame(width: 560, height: 560)
         .onAppear {
-            apps = DetectedWorkApp.installed()
             hasChrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") != nil
             showsWorkSites = !profileStore.profile.workDomains.isEmpty
             appState.refreshLoginItemStatus()
@@ -279,29 +277,13 @@ struct OnboardingView: View {
                     }
                 }
             }
-            if !apps.isEmpty {
+            .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Apps you only use for work")
                     .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 18)
-                    .padding(.bottom, 8)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                    ForEach(apps) { app in
-                        WorkAppChip(app: app, isSelected: profileStore.profile.workApps.contains(app.id)) {
-                            if profileStore.profile.workApps.contains(app.id) {
-                                profileStore.profile.workApps.remove(app.id)
-                            } else {
-                                profileStore.profile.workApps.insert(app.id)
-                            }
-                        }
-                    }
-                }
-                Text("Leave out apps you also use for personal things. Hago will ask about those.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 6)
+                WorkAppSelectionView(selectedIDs: $profileStore.profile.workApps)
             }
+            .padding(.top, 18)
             if showsWorkSites {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Work-only websites")
@@ -470,7 +452,7 @@ private struct PresetCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 104, maxHeight: .infinity, alignment: .topLeading)
             .background(
                 isSelected ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.045),
                 in: RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -479,40 +461,6 @@ private struct PresetCard: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(isSelected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
             }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-private struct WorkAppChip: View {
-    var app: DetectedWorkApp
-    var isSelected: Bool
-    var toggle: () -> Void
-
-    var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: 6) {
-                Image(nsImage: app.icon)
-                    .resizable()
-                    .frame(width: 18, height: 18)
-                Text(app.name)
-                    .font(.callout)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .background(
-                isSelected ? Color.accentColor.opacity(0.10) : Color.primary.opacity(0.045),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

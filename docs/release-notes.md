@@ -1,6 +1,6 @@
-- Added **Hago → Check for Updates…** below Settings in the app menu.
-- Remembered Accessibility permission requests across launches to avoid repeated macOS prompts.
-- Stopped attempting Accessibility window-title reads while access is unavailable.
+- Replaced the onboarding app shortlist with a searchable picker for installed apps, including Browse for apps stored elsewhere.
+- Show only selected work apps in onboarding, with quick removal, and use the same picker in Work Profile settings.
+- Match the heights of the General Work and Software Development preset cards.
 
 Download the universal DMG, open it and drag Hago to Applications. The app and DMG are Developer ID signed and notarized. Requires macOS 14 or newer; supports Apple Silicon and Intel.
 

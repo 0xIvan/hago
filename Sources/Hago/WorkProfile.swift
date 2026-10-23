@@ -62,10 +62,35 @@ struct DetectedWorkApp: Identifiable {
 
     @MainActor
     static func installed() -> [Self] {
-        let bundleIDs = ["com.apple.dt.Xcode", "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.figma.Desktop", "com.tinyspeck.slackmacgap", "com.hnc.Discord", "com.apple.Terminal", "com.mitchellh.ghostty", "com.apple.mail", "com.googlecode.iterm2", "notion.id", "com.microsoft.teams2", "us.zoom.xos"]
-        return bundleIDs.compactMap { id in
-            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { return nil }
-            return Self(id: id, name: FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: ""), url: url)
-        }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let directories = [
+            URL(fileURLWithPath: "/Applications"),
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications"),
+            URL(fileURLWithPath: "/System/Applications"),
+            URL(fileURLWithPath: "/System/Library/CoreServices/Applications")
+        ]
+        var apps: [String: Self] = [:]
+        for directory in directories {
+            guard let files = FileManager.default.enumerator(
+                at: directory, includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+            for case let url as URL in files where url.pathExtension == "app" {
+                if let app = Self(url: url), apps[app.id] == nil { apps[app.id] = app }
+            }
+        }
+        return apps.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    init?(url: URL) {
+        guard url.pathExtension == "app", let id = Bundle(url: url)?.bundleIdentifier, !id.isEmpty else { return nil }
+        self.id = id
+        name = FileManager.default.displayName(atPath: url.path)
+        if name.hasSuffix(".app") { name.removeLast(4) }
+        self.url = url
+    }
+
+    @MainActor
+    static func application(withID id: String) -> Self? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: id).flatMap { Self(url: $0) }
     }
 }
