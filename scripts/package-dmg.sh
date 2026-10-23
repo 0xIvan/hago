@@ -3,7 +3,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="${1:-$ROOT_DIR/outputs/Hago.app}"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP_DIR/Contents/Info.plist")"
-ARCH="$(lipo -archs "$APP_DIR/Contents/MacOS/Hago" | tr ' ' '-')"
+if lipo "$APP_DIR/Contents/MacOS/Hago" -verify_arch arm64 >/dev/null 2>&1 && lipo "$APP_DIR/Contents/MacOS/Hago" -verify_arch x86_64 >/dev/null 2>&1; then
+  ARCH="universal"
+else
+  ARCH="$(lipo -archs "$APP_DIR/Contents/MacOS/Hago" | tr ' ' '-')"
+fi
 OUTPUT_DIR="${2:-$ROOT_DIR/outputs}"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"

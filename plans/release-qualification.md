@@ -1,13 +1,18 @@
 # Hago distribution qualification
 
-The release workflow builds a notarized candidate on explicit dispatch. Tag builds
-publish only after notarization and appcast signature verification. CI requires an
-explicitly provisioned SPARKLE_PRIVATE_KEY secret matching the public key; without
-it publishing fails closed. No CI secret is created or private key exported by
-this implementation. The Hago-specific
-Ed25519 signing key stays in macOS Keychain under account `hago-sparkle`. Only
-its public key is in Info.plist. Local installs retain their existing signing
-certificate; distribution uses Developer ID separately.
+The Hago repository now owns the six release secrets required by its CI: the
+five Apple signing/notary credentials and Hago's own Sparkle private key. The
+private update key also remains recoverable in local Keychain under account
+`hago-sparkle`; its public key is in Info.plist. These secrets were explicitly
+provisioned for the automatic release pipeline. Normal Hago releases no longer
+run through a temporary Uso packaging branch.
+
+Successful main checks automatically bump/tag/dispatch when the repository
+variable `HAGO_AUTO_RELEASE` is `true`. Tag builds publish only after testing,
+universal packaging, notarization and appcast verification. Manual dispatch on
+main produces candidate artifacts without publishing. Published releases cannot
+be overwritten, older versions/builds are rejected, and release jobs serialize.
+Local installs retain the installed certificate; distribution uses Developer ID.
 
 1. Set `HAGO_VERSION` to a stable three-part version and `HAGO_BUILD_NUMBER` to a
    strictly increasing build number. Build/package, then run notarize-app.sh

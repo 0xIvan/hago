@@ -10,8 +10,15 @@ BUILD_NUMBER="${HAGO_BUILD_NUMBER:-$(/usr/libexec/PlistBuddy -c 'Print CFBundleV
 APP_DIR="$ROOT_DIR/outputs/$APP_NAME.app"
 
 cd "$ROOT_DIR"
-swift build -c "$CONFIGURATION" --product "$APP_NAME"
-BUILD_DIR="$(swift build -c "$CONFIGURATION" --show-bin-path)"
+BUILD_ARGS=(-c "$CONFIGURATION" --product "$APP_NAME")
+if [[ -n "${HAGO_ARCHS:-}" ]]; then
+  for architecture in ${=HAGO_ARCHS}; do
+    [[ "$architecture" == arm64 || "$architecture" == x86_64 ]] || { echo "Unsupported architecture." >&2; exit 1; }
+    BUILD_ARGS+=(--arch "$architecture")
+  done
+fi
+swift build "${BUILD_ARGS[@]}"
+BUILD_DIR="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)"
 EXECUTABLE_PATH="$BUILD_DIR/$APP_NAME"
 
 rm -rf "$APP_DIR"

@@ -2,44 +2,66 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ['v*']
   workflow_dispatch:
-    inputs:
-      version:
-        description: Stable semantic version (e.g. 0.2.0)
-        required: true
-      build:
-        description: Monotonically increasing bundle build number
-        required: true
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-public
+  cancel-in-progress: false
 
 jobs:
   release:
-    name: Build notarized release candidate
-    runs-on: macos-latest
-
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      HAGO_CODE_SIGN_IDENTITY: 'Developer ID Application: Ivan Hu Yu (AB879DAVK8)'
+      HAGO_NOTARY_PROFILE: hago-release
+      HAGO_ARCHS: arm64 x86_64
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Run tests
-        run: swift test
-
-      - name: Package app
-        env:
-          HAGO_VERSION: ${{ inputs.version || github.ref_name }}
-          HAGO_BUILD_NUMBER: ${{ inputs.build }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release metadata and publication
         run: |
-          export HAGO_VERSION="${HAGO_VERSION#v}"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Resources/Info.plist)
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && "$build" =~ ^[0-9]+$ ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Resources/Info.plist)" == com.ivan.hago ]]
+          git merge-base --is-ancestor HEAD origin/main
+          echo "HAGO_VERSION=$version" >> "$GITHUB_ENV"
+          echo "HAGO_BUILD_NUMBER=$build" >> "$GITHUB_ENV"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            SOURCE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)"
-            [[ "$HAGO_VERSION" == "$SOURCE_VERSION" ]] || { echo "Tag must match source bundle version." >&2; exit 1; }
+            [[ "$GITHUB_REF_NAME" == "v$version" ]] || { echo 'Tag must match bundle version.' >&2; exit 1; }
+            if gh release view "$GITHUB_REF_NAME" --json isDraft > "$RUNNER_TEMP/existing-release.json"; then
+              python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["isDraft"] else "Refusing to overwrite a published release.")' "$RUNNER_TEMP/existing-release.json"
+            fi
+            gh api "repos/$GH_REPO/releases" --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' > "$RUNNER_TEMP/published-tags"
+            python3 - "$version" "$RUNNER_TEMP/published-tags" <<'PY'
+          import pathlib,re,sys
+          incoming=tuple(map(int,sys.argv[1].split('.')))
+          tags=pathlib.Path(sys.argv[2]).read_text().splitlines()
+          for tag in tags:
+              if re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',tag) and tuple(map(int,tag[1:].split('.'))) >= incoming:
+                  sys.exit('Release version must exceed every published stable version.')
+          PY
+            if gh release view --json assets --jq '.assets[].name' | grep -qx appcast.xml; then
+              gh release download --pattern appcast.xml --dir "$RUNNER_TEMP/previous-feed"
+              python3 - "$build" "$RUNNER_TEMP/previous-feed/appcast.xml" <<'PY'
+          import sys,xml.etree.ElementTree as ET
+          versions=ET.parse(sys.argv[2]).findall('.//{http://www.andymatuschak.org/xml-namespaces/sparkle}version')
+          assert versions, 'Published appcast has no build version'
+          assert all(int(x.text) < int(sys.argv[1]) for x in versions), 'Build number must increase'
+          PY
+            fi
           fi
-          scripts/package-app.sh release
-
       - name: Validate signing secrets
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
@@ -47,124 +69,85 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          missing=()
-
-          [[ -n "$APPLE_CERTIFICATE_BASE64" ]] || missing+=("APPLE_CERTIFICATE_BASE64")
-          [[ -n "$APPLE_CERTIFICATE_PASSWORD" ]] || missing+=("APPLE_CERTIFICATE_PASSWORD")
-          [[ -n "$APPLE_ID" ]] || missing+=("APPLE_ID")
-          [[ -n "$APPLE_TEAM_ID" ]] || missing+=("APPLE_TEAM_ID")
-          [[ -n "$APPLE_APP_SPECIFIC_PASSWORD" ]] || missing+=("APPLE_APP_SPECIFIC_PASSWORD")
-
-          if [[ "${#missing[@]}" -gt 0 ]]; then
-            printf 'Missing required release secret: %s\n' "${missing[@]}" >&2
-            exit 1
-          fi
-
-      - name: Import Developer ID certificate
+          for name in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD SPARKLE_PRIVATE_KEY; do
+            [[ -n "${!name}" ]] || { echo "Missing release secret: $name" >&2; exit 1; }
+          done
+      - name: Build and test
+        run: swift test
+      - name: Package universal app
+        run: |
+          scripts/package-app.sh release
+          for architecture in arm64 x86_64; do lipo outputs/Hago.app/Contents/MacOS/Hago -verify_arch "$architecture"; done
+      - name: Configure signing and notarization
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          KEYCHAIN_PATH="$RUNNER_TEMP/hago-signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id-application.p12"
-
-          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERTIFICATE_PATH" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A \
-            -t cert \
-            -f pkcs12 \
-            -k "$KEYCHAIN_PATH"
-          security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: \
-            -s \
-            -k "$KEYCHAIN_PASSWORD" \
-            "$KEYCHAIN_PATH"
-          security list-keychains -d user -s "$KEYCHAIN_PATH"
-
-          SIGNING_IDENTITY="$(
-            security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
-              | awk -F '"' '/Developer ID Application/ { print $2; exit }'
-          )"
-
-          if [[ -z "$SIGNING_IDENTITY" ]]; then
-            echo "No Developer ID Application identity found in imported certificate." >&2
-            security find-identity -v -p codesigning "$KEYCHAIN_PATH" >&2
-            exit 1
-          fi
-
-          echo "HAGO_CODE_SIGN_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
-
-      - name: Sign and notarize app
-        env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-        run: scripts/notarize-app.sh outputs/Hago.app outputs/notarization.zip
-
-      - name: Create distribution artifacts
         run: |
+          umask 077
+          keychain="$RUNNER_TEMP/hago-signing.keychain-db"
+          keychain_password=$(openssl rand -hex 32)
+          echo "::add-mask::$keychain_password"
+          printf '%s' "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/hago-signing.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/hago-signing.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -k "$keychain" -T /usr/bin/codesign
+          curl --fail --silent --show-error --location https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          xcrun notarytool store-credentials "$HAGO_NOTARY_PROFILE" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD"
+      - name: Sign notarize and verify app and DMG
+        run: |
+          scripts/notarize-app.sh outputs/Hago.app outputs/notarization.zip
           scripts/package-dmg.sh outputs/Hago.app outputs
-          DMG="$(find outputs -maxdepth 1 -name 'Hago-*.dmg' -print -quit)"
-          RESULT="$(xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait --output-format json)"
-          STATUS="$(printf '%s' "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
-          [[ "$STATUS" == "Accepted" ]] || { echo "DMG notarization was not accepted: $STATUS" >&2; exit 1; }
-          xcrun stapler staple "$DMG"
-          xcrun stapler validate "$DMG"
-          spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
-          (cd outputs && shasum -a 256 Hago-*.dmg Hago-*.zip > SHA256SUMS)
-          cp outputs/SHA256SUMS "${DMG%.dmg}.sha256"
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-
-      - name: Generate and verify signed appcast
-        if: startsWith(github.ref, 'refs/tags/')
+          dmg="outputs/Hago-$HAGO_VERSION-universal.dmg"
+          xcrun notarytool submit "$dmg" --keychain-profile "$HAGO_NOTARY_PROFILE" --wait --output-format json > outputs/dmg-notarization.json
+          python3 -c 'import json; assert json.load(open("outputs/dmg-notarization.json"))["status"] == "Accepted"'
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+          hdiutil verify "$dmg"
+      - name: Generate and verify signed Sparkle feed
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          [[ -n "$SPARKLE_PRIVATE_KEY" ]] || { echo "SPARKLE_PRIVATE_KEY release secret is required." >&2; exit 1; }
-          DMG="$(find outputs -maxdepth 1 -name 'Hago-*.dmg' -print -quit)"
-          scripts/appcast.sh outputs/Hago.app "$DMG"
-
-      - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          cat > outputs/release-notes.md <<EOF
-          Download Hago-$VERSION-*.dmg, open it and drag Hago to Applications.
-          This release is Developer ID signed and notarized.
-          Check for Updates in Hago Settings uses the signed Sparkle appcast.
-          EOF
-          cp outputs/Hago-*.zip outputs/Hago.app.zip
+          scripts/appcast.sh outputs/Hago.app "outputs/Hago-$HAGO_VERSION-universal.dmg"
+          cp "outputs/Hago-$HAGO_VERSION-universal.zip" outputs/Hago.app.zip
+          (cd outputs && shasum -a 256 Hago-*.dmg Hago-*.zip Hago.app.zip appcast.xml > SHA256SUMS)
           (cd outputs && shasum -a 256 Hago.app.zip > Hago.app.zip.sha256)
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" outputs/Hago-*.dmg outputs/Hago-*.zip outputs/Hago.app.zip outputs/Hago.app.zip.sha256 outputs/SHA256SUMS outputs/appcast.xml
-          else
-            gh release create "$GITHUB_REF_NAME" outputs/Hago-*.dmg outputs/Hago-*.zip outputs/Hago.app.zip outputs/Hago.app.zip.sha256 outputs/SHA256SUMS outputs/appcast.xml --title "Hago $GITHUB_REF_NAME" --notes-file outputs/release-notes.md
+      - name: Create draft release and attach verified downloads
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --json id > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Hago $HAGO_VERSION" --notes-file docs/release-notes.md
           fi
-
-      - name: Upload release candidate for local appcast signing and qualification
-        uses: actions/upload-artifact@v4
+          gh release upload "$GITHUB_REF_NAME" outputs/Hago-*.dmg outputs/Hago-*.zip outputs/Hago.app.zip outputs/Hago.app.zip.sha256 outputs/SHA256SUMS outputs/appcast.xml --clobber
+      - name: Publish verified release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=false --latest=true
+      - name: Save verified candidate artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Hago-${{ inputs.version }}-${{ inputs.build }}
+          name: Hago-${{ env.HAGO_VERSION }}-${{ env.HAGO_BUILD_NUMBER }}-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: error
           path: |
             outputs/Hago-*.dmg
             outputs/Hago-*.zip
+            outputs/Hago.app.zip
+            outputs/Hago.app.zip.sha256
+            outputs/appcast.xml
             outputs/SHA256SUMS
-          if-no-files-found: error
-
-      - name: Remove temporary signing keychain
+            outputs/dmg-notarization.json
+      - name: Remove signing material
         if: always()
         run: |
-          security delete-keychain "$RUNNER_TEMP/hago-signing.keychain-db" || true
-          rm -f "$RUNNER_TEMP/developer-id-application.p12"
+          keychain="$RUNNER_TEMP/hago-signing.keychain-db"
+          if [[ -f "$keychain" ]]; then security delete-keychain "$keychain"; fi
+          rm -f "$RUNNER_TEMP/hago-signing.p12"

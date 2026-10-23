@@ -128,15 +128,15 @@ swift build -c release --product Hago
 
 ## Download And Install
 
-Download the latest `Hago.app.zip` from [GitHub Releases](https://github.com/0xIvan/hago/releases/latest), unzip it, and move `Hago.app` to `/Applications`.
+Download the universal DMG from [GitHub Releases](https://github.com/0xIvan/hago/releases/latest), open it, and drag Hago to Applications. Release apps and DMGs are Developer ID signed and notarized. Requires macOS 14 or newer on Apple Silicon or Intel.
 
-You can also install the latest release from Terminal:
+Hago Settings offers **Check for Updates…**. Sparkle verifies the signed update feed and download before asking to install. Checks are manual; activity and profile data are never sent to the release service.
+
+The optional Terminal installer verifies the release checksum, bundle identity, signing team, notarization ticket and Gatekeeper assessment before replacing the installed app:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/0xIvan/hago/main/scripts/install-release.sh | bash
 ```
-
-Release notes indicate whether a build is notarized. The release workflow is configured for Developer ID signing and notarization once the required Apple secrets are added. Older ad hoc signed releases may require right-clicking `Hago.app` and choosing `Open` on first launch.
 
 ## Local Package And Install
 
@@ -165,18 +165,34 @@ building, installing, or opening Hago.
 
 ## Releasing
 
-GitHub Releases are created automatically when a version tag is pushed:
+Hago uses the same automatic release flow as Uso:
+
+1. A push to `main` runs script/metadata validation and `swift test`.
+2. Once checks pass, the auto-release job bumps the patch version and integer build number, atomically pushes the version commit and tag, and explicitly dispatches the release workflow. Superseded pushes are skipped.
+3. Release CI reruns tests, builds both architectures, Developer ID signs the app and Sparkle helpers, notarizes/staples the app and DMG, and checks Gatekeeper.
+4. It signs the Sparkle appcast with Hago's own key and verifies the signature against the public key shipped in the app.
+5. CI uploads everything to a draft release, then publishes it and updates the latest-download/feed URLs. Published versions cannot be overwritten; both version and build must increase.
+
+`HAGO_AUTO_RELEASE=true` in repository Actions variables enables automatic releases. Set it to `false` to pause them without disabling checks. Pull requests never publish or access signing secrets.
+
+For a candidate without creating a public release, dispatch **Release** on `main`:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+gh workflow run release.yml --ref main
 ```
 
-After the required secrets are configured, the release workflow runs tests, packages `Hago.app`, Developer ID signs it, submits it to Apple's notary service, staples the notarization ticket, zips it, writes a checksum, and uploads both files to the GitHub release.
+For an explicit patch/minor/major version, run from a clean checkout matching the remote default branch:
+
+```sh
+scripts/release.sh --dry-run
+scripts/release.sh minor
+```
+
+Manual version tags trigger the same verified release pipeline. Source versions are authoritative; the tag must match `Resources/Info.plist`. The appcast lives at `https://github.com/0xIvan/hago/releases/latest/download/appcast.xml` and points to the immutable versioned DMG.
 
 ### Release Secrets
 
-Notarized GitHub releases require these repository secrets:
+Hago's repository owns these Actions secrets:
 
 ```text
 APPLE_CERTIFICATE_BASE64
@@ -184,17 +200,12 @@ APPLE_CERTIFICATE_PASSWORD
 APPLE_ID
 APPLE_TEAM_ID
 APPLE_APP_SPECIFIC_PASSWORD
+SPARKLE_PRIVATE_KEY
 ```
 
-`APPLE_CERTIFICATE_BASE64` must be a base64-encoded `.p12` export of a Developer ID Application certificate:
+The Apple secrets belong to the existing Developer ID/notary account. The update key is Hago-specific and must match `SUPublicEDKey`; do not substitute Uso's or mac-mirrorly's update key. Local Keychain retains the recovery copy under `hago-sparkle`. CI uses an ephemeral signing keychain and removes imported certificate material after every run. Never print or commit credential values.
 
-```sh
-base64 -i DeveloperIDApplication.p12 | pbcopy
-```
-
-`APPLE_APP_SPECIFIC_PASSWORD` is an app-specific password for the Apple ID used with the notary service.
-
-If any release secret is missing, tag-triggered release builds fail instead of publishing an unnotarized app.
+See [distribution qualification](plans/release-qualification.md) for validation boundaries.
 
 ## Defaults
 

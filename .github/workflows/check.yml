@@ -1,0 +1,62 @@
+name: Build checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Validate scripts and metadata
+        run: |
+          bash -n scripts/appcast.sh scripts/install-release.sh scripts/notarize-app.sh scripts/package-dmg.sh scripts/release.sh scripts/sparkle.sh
+          zsh -n scripts/install-app.sh scripts/package-app.sh
+          plutil -lint Resources/Info.plist Resources/Hago.entitlements
+          git diff --check
+      - name: Build and test
+        run: swift test
+
+  auto-release:
+    needs: build
+    if: vars.HAGO_AUTO_RELEASE == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    concurrency:
+      group: auto-release-main
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Bump version and dispatch release
+        run: |
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo 'A newer push superseded this commit.'
+            exit 0
+          fi
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
+          if [[ "$(git rev-parse "v$version^{commit}" 2>/dev/null || true)" == "$(git rev-parse HEAD)" ]]; then
+            echo 'This commit already has a release tag.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          scripts/release.sh
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
+          # GITHUB_TOKEN pushes do not trigger workflows; dispatch the tag explicitly.
+          gh workflow run release.yml --ref "v$version"
