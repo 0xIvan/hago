@@ -34,7 +34,6 @@ final class AppState: ObservableObject {
     @Published private(set) var isRelaunching = false
     @Published private(set) var accessibilityRequest = AccessibilityRequest.notRequested
     @Published var selectedSection: HagoSection = .overview
-    @Published var selectedSettingsSection: HagoSection = .profile
 
     private let reader = ActiveWindowReader()
     private let classifier = ActivityClassifier()
@@ -198,17 +197,11 @@ final class AppState: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func prepareSettings(section: HagoSection) {
-        guard HagoSection.settingsSections.contains(section) else { return }
-        selectedSettingsSection = section
-        prepareToOpenAppWindow()
-    }
-
     func openDashboardWindow() {
         openHagoWindow(section: .overview)
     }
 
-    private func openHagoWindow(section: HagoSection) {
+    func openHagoWindow(section: HagoSection) {
         selectedSection = section
         prepareToOpenAppWindow()
 

@@ -1,20 +1,17 @@
 import SwiftUI
 
 enum HagoSection: String, CaseIterable, Identifiable, Hashable {
-    case tracking
-    case profile
     case overview
     case reports
     case review
-    case aiReview
     case activity
+    case tracking
+    case profile
     case rules
     case projects
     case categories
     case privacy
-
-    static let dashboardSections: [Self] = [.overview, .reports, .review, .activity]
-    static let settingsSections: [Self] = [.tracking, .profile, .rules, .projects, .categories, .privacy, .aiReview]
+    case aiReview
 
     var id: String {
         rawValue

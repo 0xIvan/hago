@@ -5,7 +5,6 @@ import SwiftUI
 struct OnboardingView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var profileStore: WorkProfileStore
-    @Environment(\.openSettings) private var openSettings
     @State private var hasChrome = false
     @State private var showsWorkSites = false
     @State private var error: String?
@@ -342,8 +341,7 @@ struct OnboardingView: View {
                     tip("sparkles", "AI suggestions are optional", "Connect a provider to suggest how to file Needs review.")
                     Button("AI Settings…") {
                         profileStore.finish()
-                        appState.prepareSettings(section: .aiReview)
-                        openSettings()
+                        appState.openHagoWindow(section: .aiReview)
                     }
                     .buttonStyle(.link)
                     .padding(.leading, 32)

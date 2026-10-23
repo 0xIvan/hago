@@ -8,16 +8,17 @@ struct DashboardView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(HagoSection.dashboardSections, selection: $appState.selectedSection) { section in
+            List(HagoSection.allCases, selection: $appState.selectedSection) { section in
                 SidebarSectionLabel(section: section, reviewCount: appState.reviewGroups.count)
                     .tag(section)
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
         } detail: {
             selectedSectionView
-                .padding(appState.selectedSection == .review ? 0 : 20)
+                .padding([.review, .profile, .tracking].contains(appState.selectedSection) ? 0 : 20)
                 .navigationTitle(appState.selectedSection.title)
         }
+        .frame(minWidth: 850, minHeight: 650)
         .background(WindowLifecycleView(id: "dashboard"))
         .sheet(isPresented: $profileStore.needsSetup, onDismiss: appState.relaunchAfterOnboardingDismissal) {
             OnboardingView().environmentObject(appState).environmentObject(profileStore)
@@ -36,8 +37,20 @@ struct DashboardView: View {
             ReviewTab()
         case .activity:
             RecentActivityTab()
-        default:
-            OverviewTab()
+        case .tracking:
+            TrackingSettingsView()
+        case .profile:
+            WorkProfileView()
+        case .rules:
+            RulesSettingsView()
+        case .projects:
+            ProjectsSettingsView()
+        case .categories:
+            CategoriesSettingsView()
+        case .privacy:
+            PrivacySettingsView()
+        case .aiReview:
+            ReviewAISettingsView()
         }
     }
 }
@@ -104,7 +117,6 @@ private struct OverviewTab: View {
 
 private struct ReviewTab: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.openSettings) private var openSettings
     @State private var inspectingRun: ReviewAIRunSummary?
     @State private var rememberingRule: Rule?
     @State private var selectedGroupID: String?
@@ -165,8 +177,7 @@ private struct ReviewTab: View {
                 Spacer()
 
                 Button {
-                    appState.prepareSettings(section: .aiReview)
-                    openSettings()
+                    appState.openHagoWindow(section: .aiReview)
                 } label: {
                     Label(
                         appState.reviewAISettings.selectedHarness.displayName,
