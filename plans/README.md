@@ -21,7 +21,8 @@ candidate from source `7b9cae6` is Developer ID signed, notarized, installed,
 and has a verified signed appcast. Status remains IN PROGRESS for installed UI,
 two-version update and full OS/fresh-machine qualification; see the delivery
 evidence in Plan 002 and [distribution qualification](release-qualification.md).
-No public release/feed was published.
+Release delivery now runs through Hago's own verified automatic pipeline;
+interactive update installation and full OS qualification remain open.
 
 ## Dependency notes
 

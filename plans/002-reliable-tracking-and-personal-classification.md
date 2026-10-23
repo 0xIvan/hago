@@ -631,3 +631,15 @@ lands. Do not require a single monolithic PR or rewrite to deliver this revision
   minimum-OS/Intel, real sleep/wake and logout/login. Direct provider adapters
   and Keychain behavior passed synthetic checks; no real paid API call was made.
   These are explicit limitations rather than a production-ready certification.
+
+
+### Automatic release pipeline — 2026-10-23
+
+The user's request for a release/update pipeline like Uso supersedes the earlier
+artifact-only release boundary. Hago now owns its six Actions signing secrets,
+and Hago-specific update key recovery remains in Keychain. Verified main pushes
+bump/version/tag and dispatch the universal signed/notarized release pipeline.
+The first automatic bump produced v0.2.1, build 3. See
+[distribution qualification](release-qualification.md) and README Releasing for
+the current pipeline and verified SDK scenarios. Interactive Sparkle installation
+and full OS/fresh-machine qualification remain open; do not treat CI as UX proof.

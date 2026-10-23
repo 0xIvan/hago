@@ -52,7 +52,8 @@ jobs:
               if re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',tag) and tuple(map(int,tag[1:].split('.'))) >= incoming:
                   sys.exit('Release version must exceed every published stable version.')
           PY
-            if gh release view --json assets --jq '.assets[].name' | grep -qx appcast.xml; then
+            gh release view --json assets --jq '.assets[].name' > "$RUNNER_TEMP/latest-asset-names"
+            if grep -qx appcast.xml "$RUNNER_TEMP/latest-asset-names"; then
               gh release download --pattern appcast.xml --dir "$RUNNER_TEMP/previous-feed"
               python3 - "$build" "$RUNNER_TEMP/previous-feed/appcast.xml" <<'PY'
           import sys,xml.etree.ElementTree as ET
@@ -127,6 +128,8 @@ jobs:
           if ! gh release view "$GITHUB_REF_NAME" --json id > /dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Hago $HAGO_VERSION" --notes-file docs/release-notes.md
           fi
+          gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/ready-draft"
+          [[ "$(cat "$RUNNER_TEMP/ready-draft")" == true ]] || { echo 'Release is no longer a draft.' >&2; exit 1; }
           gh release upload "$GITHUB_REF_NAME" outputs/Hago-*.dmg outputs/Hago-*.zip outputs/Hago.app.zip outputs/Hago.app.zip.sha256 outputs/SHA256SUMS outputs/appcast.xml --clobber
       - name: Publish verified release
         if: startsWith(github.ref, 'refs/tags/v')
