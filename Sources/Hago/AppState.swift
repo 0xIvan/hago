@@ -983,8 +983,8 @@ final class AppState: ObservableObject {
         ) { [weak self] _ in
             // The trust list notification can arrive before AXIsProcessTrusted reflects the change.
             for delay in [0.3, 1.5] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                    MainActor.assumeIsolated { self?.refreshAccessibilityTrust() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.refreshAccessibilityTrust()
                 }
             }
         }
