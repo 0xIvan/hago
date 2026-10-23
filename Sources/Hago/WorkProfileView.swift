@@ -8,11 +8,10 @@ struct WorkProfileView: View {
 
     var body: some View {
         Form {
-            Section("Your work") {
-                Text("Choose the work you do. Presets provide starting defaults; your corrections take priority.")
-                    .foregroundStyle(.secondary)
-                Toggle("General Work", isOn: presetBinding("general-work"))
-                Toggle("Software Development", isOn: presetBinding("software-development"))
+            Section("Starter rules") {
+                Toggle("Developer tools", isOn: presetBinding("software-development"))
+                Text("Dedicated editors and localhost default to Work. Choose shared apps and websites below.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Tools you use for work") {
                 WorkAppSelectionView(selectedIDs: $profileStore.profile.workApps)
@@ -23,7 +22,7 @@ struct WorkProfileView: View {
                 Text("Use only domains whose entire activity is work. For a mixed-use site, leave it out and remember narrower contexts from Activity. Answers stay on this Mac and are not automatically shared with AI.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Button("Save Work Profile") { save() }
+            Button("Save Work Defaults") { save() }
                 .buttonStyle(.borderedProminent)
             if let message { Text(message).foregroundStyle(.secondary) }
         }

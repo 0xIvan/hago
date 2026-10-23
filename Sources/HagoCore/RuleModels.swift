@@ -91,6 +91,7 @@ public struct RuleAction: Equatable, Codable, Sendable {
 public enum ClassificationRuleOrigin: String, Codable, Sendable {
     case legacy
     case user
+    case profile
     case preset
     case ai
 }
@@ -106,6 +107,13 @@ public struct Rule: Identifiable, Equatable, Codable, Sendable {
     public var origin: ClassificationRuleOrigin?
     public var presetID: String?
     public var parentRuleID: UUID?
+
+    public var isWorkDefault: Bool {
+        origin == .profile || (origin == .user && name.hasPrefix("Work Profile: ")
+            && conditions.count == 1 && conditions.allSatisfy {
+                $0.operation == .equals && ($0.field == .bundleIdentifier || $0.field == .host)
+            })
+    }
 
     public init(
         id: UUID = UUID(),

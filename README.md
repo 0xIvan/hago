@@ -209,6 +209,8 @@ See [distribution qualification](plans/release-qualification.md) for validation 
 
 ## Defaults
 
+**Rules** contains both **Specific Rules** and **Work Defaults**. More specific site, title, and project rules take precedence over whole-app defaults. Ignore rules always win; manual corrections are preserved. Projects and Categories remain available under **Advanced** in the sidebar.
+
 The app ships with editable default categories and rules for common work, personal, review, and privacy cases. Users can add, remove, or edit rules, projects, categories, and ignore patterns in the app.
 
 ## License

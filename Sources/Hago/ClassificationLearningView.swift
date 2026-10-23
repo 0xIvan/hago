@@ -72,26 +72,3 @@ struct RememberRulePreviewView: View {
         }
     }
 }
-
-struct StarterPresetsView: View {
-    @EnvironmentObject private var appState: AppState
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Starter Presets").font(.headline)
-            Text("Applies to future activity. Your personal rules take precedence; shared tools remain unresolved.")
-                .font(.caption).foregroundStyle(.secondary)
-            ForEach(StarterPresets.packs) { pack in
-                Toggle(isOn: Binding(get: { appState.selectedPresetIDs.contains(pack.id) }, set: { enabled in
-                    var ids = appState.selectedPresetIDs
-                    if enabled { ids.insert(pack.id) } else { ids.remove(pack.id) }
-                    appState.setEnabledPresets(ids)
-                })) {
-                    VStack(alignment: .leading) {
-                        Text(pack.name)
-                        Text(pack.summary).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-    }
-}

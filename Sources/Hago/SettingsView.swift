@@ -12,8 +12,12 @@ struct RulesSettingsView: View {
     @State private var fieldFilter = RuleFieldFilter.all
     @State private var showsBuiltIns = false
 
+    private var specificRecords: [RuleReviewRecord] {
+        appState.ruleReviewRecords.filter { !$0.rule.isWorkDefault }
+    }
+
     private var displayedRecords: [RuleReviewRecord] {
-        filteredRecords(appState.ruleReviewRecords)
+        filteredRecords(specificRecords)
     }
 
     private var displayedGroups: [RuleListGroup] {
@@ -26,7 +30,7 @@ struct RulesSettingsView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Rules")
                         .font(.title2.weight(.semibold))
-                    Text("\(attentionCount) need attention · \(appState.ruleReviewRecords.count) total")
+                    Text("\(attentionCount) need attention · \(specificRecords.count) total")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -48,7 +52,6 @@ struct RulesSettingsView: View {
                 }
             }
 
-            StarterPresetsView()
             ClassificationLearningPanel()
             ruleControls
 
@@ -91,11 +94,11 @@ struct RulesSettingsView: View {
     }
 
     private var emptyRulesMessage: String {
-        appState.ruleReviewRecords.isEmpty ? "No rules" : "No matching rules"
+        specificRecords.isEmpty ? "No specific rules" : "No matching rules"
     }
 
     private var attentionCount: Int {
-        appState.ruleReviewRecords.filter {
+        specificRecords.filter {
             !$0.issues.isDisjoint(with: [.conflict, .duplicate])
         }.count
     }
@@ -520,21 +523,24 @@ struct RuleEditorView: View {
 
                 Toggle("Enabled", isOn: $enabled)
 
-                Stepper(value: $priority, in: 1...2_000) {
-                    Text("Priority \(priority)")
-                }
-
                 Picker("Result", selection: $kind) {
                     ForEach(ActivityKind.allCases) { kind in
                         Text(kind.displayName).tag(kind)
                     }
                 }
 
-                Picker("Project", selection: $projectIDValue) {
-                    Text("None").tag("")
-                    ForEach(projects.filter { !$0.isArchived }) { project in
-                        Text(project.name).tag(project.id.uuidString)
+                DisclosureGroup("Advanced") {
+                    Picker("Project", selection: $projectIDValue) {
+                        Text("None").tag("")
+                        ForEach(projects.filter { !$0.isArchived }) { project in
+                            Text(project.name).tag(project.id.uuidString)
+                        }
                     }
+                    Stepper(value: $priority, in: 1...2_000) {
+                        Text("Priority \(priority)")
+                    }
+                    Text("Specific context takes precedence over priority. Conflicting personal rules need review.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Picker("Field", selection: $field) {

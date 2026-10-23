@@ -7,6 +7,57 @@ struct ActivityClassifierTests {
     private let classifier = ActivityClassifier()
     private let rules = SeedData.rules
 
+    @Test
+    func projectContextOverridesCurrentAndOlderWorkDefaults() {
+        let projectID = UUID()
+        let projectRule = Rule(
+            name: "Reflekt project", priority: 900, enabled: true, isBuiltIn: false,
+            action: RuleAction(kind: .work, categoryID: SeedData.workCategoryID, projectID: projectID),
+            conditions: [RuleCondition(field: .windowTitle, operation: .contains, value: "Reflekt")],
+            origin: .legacy
+        )
+        for origin in [ClassificationRuleOrigin.profile, .user] {
+            let appDefault = Rule(
+                name: "Work Profile: com.microsoft.VSCode", priority: 1, enabled: true, isBuiltIn: false,
+                action: RuleAction(kind: .work, categoryID: SeedData.workCategoryID, projectID: nil),
+                conditions: [RuleCondition(field: .bundleIdentifier, operation: .equals, value: "com.microsoft.VSCode")],
+                origin: origin
+            )
+            let result = classifier.classify(
+                snapshot: snapshot(appName: "Code", bundleIdentifier: "com.microsoft.VSCode", title: "Reflekt-UI"),
+                rules: [appDefault, projectRule]
+            )
+            #expect(result.projectID == projectID)
+            #expect(result.ruleID == projectRule.id)
+            let fallback = classifier.classify(
+                snapshot: snapshot(appName: "Code", bundleIdentifier: "com.microsoft.VSCode", title: "Other project"),
+                rules: [appDefault, projectRule]
+            )
+            #expect(fallback.ruleID == appDefault.id)
+        }
+    }
+
+    @Test
+    func specificPersonalContextOverridesWorkDefaultAndIgnoreRemainsStrongest() {
+        let appDefault = Rule(
+            name: "Discord default", priority: 1, enabled: true, isBuiltIn: false,
+            action: RuleAction(kind: .work, categoryID: SeedData.workCategoryID, projectID: nil),
+            conditions: [RuleCondition(field: .bundleIdentifier, operation: .equals, value: "com.hnc.Discord")],
+            origin: .profile
+        )
+        var personal = Rule(
+            name: "Personal Discord channel", priority: 900, enabled: true, isBuiltIn: false,
+            action: RuleAction(kind: .personal, categoryID: SeedData.personalCategoryID, projectID: nil),
+            conditions: [
+                RuleCondition(field: .bundleIdentifier, operation: .equals, value: "com.hnc.Discord"),
+                RuleCondition(field: .windowTitle, operation: .contains, value: "friends")
+            ], origin: .legacy
+        )
+        let activity = snapshot(appName: "Discord", bundleIdentifier: "com.hnc.Discord", title: "friends")
+        #expect(classifier.classify(snapshot: activity, rules: [appDefault, personal]).kind == .personal)
+        personal.action = RuleAction(kind: .ignored, categoryID: nil, projectID: nil)
+        #expect(classifier.classify(snapshot: activity, rules: [appDefault, personal]).kind == .ignored)
+    }
 
 
     @Test

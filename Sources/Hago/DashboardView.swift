@@ -5,17 +5,26 @@ import HagoCore
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var profileStore: WorkProfileStore
+    @State private var showsAdvanced = false
 
     var body: some View {
         NavigationSplitView {
-            List(HagoSection.allCases, selection: $appState.selectedSection) { section in
-                SidebarSectionLabel(section: section, reviewCount: appState.reviewGroups.count)
-                    .tag(section)
+            List(selection: $appState.selectedSection) {
+                ForEach(HagoSection.primarySections) { section in
+                    SidebarSectionLabel(section: section, reviewCount: appState.reviewGroups.count)
+                        .tag(section)
+                }
+                DisclosureGroup("Advanced", isExpanded: $showsAdvanced) {
+                    ForEach(HagoSection.advancedSections) { section in
+                        SidebarSectionLabel(section: section, reviewCount: appState.reviewGroups.count)
+                            .tag(section)
+                    }
+                }
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
         } detail: {
             selectedSectionView
-                .padding([.review, .profile, .tracking].contains(appState.selectedSection) ? 0 : 20)
+                .padding([.review, .rules, .tracking].contains(appState.selectedSection) ? 0 : 20)
                 .navigationTitle(appState.selectedSection.title)
         }
         .frame(minWidth: 850, minHeight: 650)
@@ -39,10 +48,8 @@ struct DashboardView: View {
             RecentActivityTab()
         case .tracking:
             TrackingSettingsView()
-        case .profile:
-            WorkProfileView()
         case .rules:
-            RulesSettingsView()
+            RulesManagementView()
         case .projects:
             ProjectsSettingsView()
         case .categories:

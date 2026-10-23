@@ -8,7 +8,7 @@ struct WorkAppSelectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Choose apps you use only for work. Leave out apps you also use for personal things.")
+            Text("Choose apps that should default to Work. More specific rules can classify exceptions.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ForEach(selectedIDs.sorted(), id: \.self) { id in
@@ -62,7 +62,7 @@ private struct WorkAppPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Choose work apps").font(.title2.weight(.semibold))
-            Text("All activity in these apps will count as work. You can change this later.")
+            Text("These apps default to Work. Specific site, title, and project rules take precedence.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             TextField("Search installed apps", text: $search)

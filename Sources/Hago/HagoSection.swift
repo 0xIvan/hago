@@ -6,12 +6,14 @@ enum HagoSection: String, CaseIterable, Identifiable, Hashable {
     case review
     case activity
     case tracking
-    case profile
     case rules
     case projects
     case categories
     case privacy
     case aiReview
+
+    static let primarySections: [Self] = [.overview, .reports, .review, .activity, .tracking, .rules, .privacy, .aiReview]
+    static let advancedSections: [Self] = [.projects, .categories]
 
     var id: String {
         rawValue
@@ -20,7 +22,6 @@ enum HagoSection: String, CaseIterable, Identifiable, Hashable {
     var title: String {
         switch self {
         case .tracking: "Tracking & Updates"
-        case .profile: "Work Profile"
         case .overview:
             "Overview"
         case .reports:
@@ -45,7 +46,6 @@ enum HagoSection: String, CaseIterable, Identifiable, Hashable {
     var symbolName: String {
         switch self {
         case .tracking: "gearshape"
-        case .profile: "person.crop.circle"
         case .overview:
             "chart.bar.xaxis"
         case .reports:

@@ -301,7 +301,7 @@ public final class HagoStore {
                 uuidColumn(statement, 0)
             }
         )
-        let rulesByMatch = Dictionary(grouping: rules.filter(\.enabled), by: ruleMatchSignature)
+        let rulesByMatch = Dictionary(grouping: rules.filter { $0.enabled && !$0.isWorkDefault }, by: ruleMatchSignature)
 
         return rules.map { rule in
             let matchingRules = rulesByMatch[ruleMatchSignature(rule)] ?? []
@@ -1646,7 +1646,7 @@ public final class HagoStore {
         let reason: String
         if classification.isManual { reason = "Your explicit correction" }
         else if let ruleID = classification.ruleID, let rule = try loadRules().first(where: { $0.id == ruleID }) {
-            reason = "\(rule.origin == .preset ? "Preset" : rule.origin == .user ? "Personal rule" : rule.origin == .ai ? "AI rule" : "Legacy rule"): \(rule.name)"
+            reason = "\(rule.isWorkDefault ? "Work default" : rule.origin == .preset ? "Preset" : rule.origin == .user ? "Personal rule" : rule.origin == .ai ? "AI rule" : "Legacy rule"): \(rule.name)"
         } else { reason = "No matching rule; needs your input" }
         try execute("INSERT INTO classification_reasons(segment_id, reason) VALUES (?, ?) ON CONFLICT(segment_id) DO UPDATE SET reason=excluded.reason",
                     bindings: [.text(classification.segmentID.uuidString), .text(reason)])

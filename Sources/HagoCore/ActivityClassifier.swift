@@ -33,15 +33,20 @@ public struct ActivityClassifier {
         if let exclusion = matchingRules.first(where: { $0.action.kind == .ignored }) {
             return result(for: exclusion)
         }
-        let personalRules = matchingRules.filter { $0.origin == .user }
-        if !personalRules.isEmpty {
-            let narrowest = personalRules.filter { candidate in
-                !personalRules.contains { $0.parentRuleID == candidate.id }
+        let humanRules = matchingRules.filter {
+            $0.origin == .user || $0.origin == .profile || $0.origin == .legacy || $0.origin == nil
+        }
+        if !humanRules.isEmpty {
+            let narrowest = humanRules.filter { candidate in
+                !humanRules.contains { $0.parentRuleID == candidate.id }
             }
             let specificity = narrowest.map(scopeSpecificity).max() ?? 0
-            return resolve(narrowest.filter { scopeSpecificity($0) == specificity })
-        }
-        if let legacy = matchingRules.first(where: { $0.origin == nil || $0.origin == .legacy }) {
+            let specificRules = narrowest.filter { scopeSpecificity($0) == specificity }
+            let personalRules = specificRules.filter { $0.origin == .user && !$0.isWorkDefault }
+            if !personalRules.isEmpty { return resolve(personalRules) }
+            let defaults = specificRules.filter(\.isWorkDefault)
+            if !defaults.isEmpty { return resolve(defaults) }
+            guard let legacy = specificRules.first else { return resolve([]) }
             if snapshot.isDiscordWithoutTitle && legacy.isBuiltIn {
                 return ClassificationResult(kind: .review, categoryID: nil, projectID: nil, ruleID: nil,
                                             reason: "Discord channel context is unavailable")
@@ -68,7 +73,7 @@ public struct ActivityClassifier {
     private func result(for rule: Rule) -> ClassificationResult {
         ClassificationResult(kind: rule.action.kind, categoryID: rule.action.categoryID,
                              projectID: rule.action.projectID, ruleID: rule.id,
-                             reason: "\(rule.origin == .preset ? "Preset" : rule.origin == .user ? "Personal rule" : rule.origin == .ai ? "AI rule" : "Legacy rule"): \(rule.name)")
+                             reason: "\(rule.isWorkDefault ? "Work default" : rule.origin == .preset ? "Preset" : rule.origin == .user ? "Personal rule" : rule.origin == .ai ? "AI rule" : "Legacy rule"): \(rule.name)")
     }
 
     private func scopeSpecificity(_ rule: Rule) -> Int {

@@ -258,7 +258,7 @@ final class AppState: ObservableObject {
             let id = updatedProfile.ruleIDs[identity] ?? UUID()
             updatedProfile.ruleIDs[identity] = id
             return Rule(id: id, name: "Work Profile: " + condition.value, priority: 150, enabled: true, isBuiltIn: false,
-                        action: RuleAction(kind: .work, categoryID: categories.first { $0.kind == .work }?.id, projectID: nil), conditions: [condition], origin: .user)
+                        action: RuleAction(kind: .work, categoryID: categories.first { $0.kind == .work }?.id, projectID: nil), conditions: [condition], origin: .profile)
         }
         try store.applyWorkProfile(presetIDs: profile.presetIDs, rules: profileRules, removingRuleIDs: removedIDs)
         profile = updatedProfile
