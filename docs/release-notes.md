@@ -1,8 +1,6 @@
-- Reorganized the sidebar into your views (Overview, Review, Activity, Reports) and Settings (General, Rules, Privacy, AI suggestions, Projects, Categories).
-- Review is faster to clear: the first item is selected so W / P / I work right away, the next item stays selected after each decision, items can be sorted by longest, and each row shows the app icon with an Always… shortcut for creating rules.
-- AI suggestions show the top three by time with a one-click Accept for the suggested choice; the rest are one click away.
-- Rules has one search field and a single Filter menu, on/off switches and result badges. The rule editor now edits every condition, so "this page" rules keep both host and URL.
-- Privacy now holds permissions, what is always private, and a "Never record" list that shows the actual app, site, or title, with an Add menu for each kind.
+- Review shows each AI suggestion on the item it belongs to instead of in a separate list. Press A or click Accept to take it, sort with AI First, or accept every Work or Personal suggestion at 90% confidence or higher in one step.
+- Review rows are compact: a light selection color, actions on the selected or hovered row, ↑ ↓ to move, "<1m" for short items, and a warning line only for conflicting rules.
+- Review merges near-identical items whose window titles differ only by numbers, such as unread counts in Mail.
 
 Download the universal DMG, open it and drag Hago to Applications. The app and DMG are Developer ID signed and notarized. Requires macOS 14 or newer; supports Apple Silicon and Intel.
 

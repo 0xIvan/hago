@@ -126,6 +126,7 @@ private struct OverviewTab: View {
 private enum ReviewSort: String, CaseIterable, Identifiable {
     case recent
     case longest
+    case suggested
 
     var id: Self { self }
 
@@ -133,8 +134,17 @@ private enum ReviewSort: String, CaseIterable, Identifiable {
         switch self {
         case .recent: "Recent"
         case .longest: "Longest"
+        case .suggested: "AI First"
         }
     }
+}
+
+private struct ReviewEntry: Identifiable {
+    let group: AggregatedActivity
+    let item: ClassifiedSegment
+    let suggestion: ReviewAISuggestion?
+
+    var id: String { group.id }
 }
 
 private struct ReviewTab: View {
@@ -142,42 +152,91 @@ private struct ReviewTab: View {
     @State private var inspectingRun: ReviewAIRunSummary?
     @State private var rememberingRule: Rule?
     @State private var selectedGroupID: String?
+    @State private var hoveredGroupID: String?
     @State private var sort = ReviewSort.recent
-    @State private var showsAllSuggestions = false
+    @State private var confirmsBulkAccept = false
     @FocusState private var listHasKeyboardFocus: Bool
     private let formatter = TimeFormatting()
 
-    private var groups: [AggregatedActivity] {
-        let groups = appState.reviewGroups
+    private var entries: [ReviewEntry] {
+        let suggestionsByID = Dictionary(
+            appState.reviewAISuggestions.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let entries = appState.reviewGroups.compactMap { group -> ReviewEntry? in
+            guard let item = appState.reviewSegments.first(where: { group.segmentIDs.contains($0.id) }) else {
+                return nil
+            }
+            let suggestion = suggestionsByID.isEmpty
+                ? nil
+                : ReviewAISuggestionRequest(reviewSegments: [item]).groups.first.flatMap { suggestionsByID[$0.id] }
+            return ReviewEntry(group: group, item: item, suggestion: suggestion)
+        }
+
         switch sort {
         case .recent:
-            return groups
+            return entries
         case .longest:
-            return groups.sorted { $0.duration > $1.duration }
+            return entries.sorted { $0.group.duration > $1.group.duration }
+        case .suggested:
+            return entries.enumerated().sorted { first, second in
+                let firstConfidence = first.element.suggestion.map { (ReviewSuggestionChoice.canAccept($0) ? 1 : 0) + $0.confidence } ?? -1
+                let secondConfidence = second.element.suggestion.map { (ReviewSuggestionChoice.canAccept($0) ? 1 : 0) + $0.confidence } ?? -1
+                if firstConfidence != secondConfidence { return firstConfidence > secondConfidence }
+                return first.offset < second.offset
+            }
+            .map(\.element)
+        }
+    }
+
+    private var confidentSuggestions: [ReviewAISuggestion] {
+        appState.reviewAISuggestions.filter { suggestion in
+            (suggestion.kind == .work || suggestion.kind == .personal)
+                && suggestion.confidence >= 0.9
+                && ReviewAISuggestionValidator().validationResult(for: suggestion).canApply
         }
     }
 
     var body: some View {
-        let groups = groups
+        let entries = entries
+        let selectedID = selectedID(in: entries)
         VStack(spacing: 0) {
-            header(groups)
+            header(entries)
             Divider()
-            List(selection: selection(in: groups)) {
-                correctionBanner
-                LearningSuggestionsSection()
-                reviewAISuggestionsSection
-                reviewItemsSection(groups)
-            }
-            .listStyle(.inset)
-            .focused($listHasKeyboardFocus)
-            .onAppear { listHasKeyboardFocus = true }
-            .onKeyPress(characters: CharacterSet(charactersIn: "wWpPiI")) { press in
-                guard press.modifiers.intersection([.command, .control, .option]).isEmpty,
-                      let id = selection(in: groups).wrappedValue,
-                      let group = groups.first(where: { $0.id == id }) else { return .ignored }
-                let key = press.characters.lowercased()
-                classify(group, as: key == "w" ? .work : key == "p" ? .personal : .ignored, in: groups)
-                return .handled
+            ScrollViewReader { proxy in
+                List {
+                    correctionBanner
+                    LearningSuggestionsSection()
+                    reviewItemsSection(entries, selectedID: selectedID)
+                }
+                .listStyle(.inset)
+                .focusable()
+                .focusEffectDisabled()
+                .focused($listHasKeyboardFocus)
+                .onAppear { listHasKeyboardFocus = true }
+                .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                    guard let index = entries.firstIndex(where: { $0.id == selectedID }) else { return .ignored }
+                    let next = press.key == .upArrow ? index - 1 : index + 1
+                    guard entries.indices.contains(next) else { return .handled }
+                    selectedGroupID = entries[next].id
+                    proxy.scrollTo(entries[next].id)
+                    return .handled
+                }
+                .onKeyPress(characters: CharacterSet(charactersIn: "wWpPiIaA")) { press in
+                    guard press.modifiers.intersection([.command, .control, .option]).isEmpty,
+                          let entry = entries.first(where: { $0.id == selectedID }) else { return .ignored }
+                    switch press.characters.lowercased() {
+                    case "w": classify(entry, as: .work, in: entries)
+                    case "p": classify(entry, as: .personal, in: entries)
+                    case "i": classify(entry, as: .ignored, in: entries)
+                    default:
+                        guard let suggestion = entry.suggestion, ReviewSuggestionChoice.canAccept(suggestion) else {
+                            return .ignored
+                        }
+                        accept(suggestion, for: entry, in: entries)
+                    }
+                    return .handled
+                }
             }
         }
         .sheet(item: $rememberingRule) { rule in
@@ -187,54 +246,75 @@ private struct ReviewTab: View {
             AppliedReviewRulesView(run: run)
                 .environmentObject(appState)
         }
-    }
-
-    private func selection(in groups: [AggregatedActivity]) -> Binding<String?> {
-        Binding(
-            get: {
-                if let selectedGroupID, groups.contains(where: { $0.id == selectedGroupID }) {
-                    return selectedGroupID
+        .confirmationDialog(
+            "Accept \(confidentSuggestions.count) AI suggestions?",
+            isPresented: $confirmsBulkAccept
+        ) {
+            Button("Create \(confidentSuggestions.count) Rules") {
+                for suggestion in confidentSuggestions {
+                    appState.applyReviewAISuggestion(suggestion, as: suggestion.kind)
                 }
-                return groups.first?.id
-            },
-            set: { selectedGroupID = $0 }
-        )
-    }
-
-    private func classify(_ group: AggregatedActivity, as kind: ActivityKind, in groups: [AggregatedActivity]) {
-        if let index = groups.firstIndex(where: { $0.id == group.id }) {
-            let remaining = groups.filter { $0.id != group.id }
-            selectedGroupID = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Each suggestion at 90% confidence or higher becomes a Work or Personal rule and reclassifies its \(confidentSuggestions.reduce(0) { $0 + $1.affectedCount }) recordings. You can edit or delete the rules in Rules.")
         }
-        appState.classifyReviewGroup(group, as: kind)
     }
 
-    private func header(_ groups: [AggregatedActivity]) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(groups.isEmpty ? "All caught up" : "\(groups.count) to review")
-                    .font(.title2.weight(.semibold))
-                Text(groups.isEmpty
-                     ? "New activity Hago can't classify will show up here."
-                     : "\(formatter.compactDuration(groups.reduce(0) { $0 + $1.duration })) unclassified across \(appState.reviewSegments.count) recordings")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
+    private func selectedID(in entries: [ReviewEntry]) -> String? {
+        if let selectedGroupID, entries.contains(where: { $0.id == selectedGroupID }) {
+            return selectedGroupID
+        }
+        return entries.first?.id
+    }
 
-            Spacer()
+    private func selectNext(after entry: ReviewEntry, removing removedIDs: Set<String>, in entries: [ReviewEntry]) {
+        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        let remaining = entries.enumerated().filter { !removedIDs.contains($0.element.id) }
+        selectedGroupID = remaining.first(where: { $0.offset > index })?.element.id ?? remaining.last?.element.id
+    }
 
-            if !groups.isEmpty {
-                Picker("Sort", selection: $sort) {
-                    ForEach(ReviewSort.allCases) { sort in
-                        Text(sort.title).tag(sort)
-                    }
+    private func classify(_ entry: ReviewEntry, as kind: ActivityKind, in entries: [ReviewEntry]) {
+        selectNext(after: entry, removing: [entry.id], in: entries)
+        appState.classifyReviewGroup(entry.group, as: kind)
+    }
+
+    private func accept(_ suggestion: ReviewAISuggestion, for entry: ReviewEntry, in entries: [ReviewEntry]) {
+        let covered = Set(entries.filter { $0.suggestion?.id == suggestion.id }.map(\.id))
+        selectNext(after: entry, removing: covered.union([entry.id]), in: entries)
+        appState.applyReviewAISuggestion(suggestion, as: suggestion.kind)
+    }
+
+    private func header(_ entries: [ReviewEntry]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(entries.isEmpty ? "All caught up" : "\(entries.count) to review")
+                        .font(.title2.weight(.semibold))
+                    Text(entries.isEmpty
+                         ? "New activity Hago can't classify will show up here."
+                         : "\(ReviewDuration.text(entries.reduce(0) { $0 + $1.group.duration }, formatter: formatter)) unclassified across \(appState.reviewSegments.count) recordings")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+
+                Spacer()
+
+                if !entries.isEmpty {
+                    Picker("Sort", selection: $sort) {
+                        ForEach(ReviewSort.allCases.filter { $0 != .suggested || !appState.reviewAISuggestions.isEmpty }) { sort in
+                            Text(sort.title).tag(sort)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+
+                aiButton
             }
 
-            aiButton
+            aiStatus
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -254,6 +334,14 @@ private struct ReviewTab: View {
                 Label("Set Up AI…", systemImage: "sparkles")
             }
             .help("Connect an AI provider to suggest how to file this activity")
+        } else if !confidentSuggestions.isEmpty {
+            Button {
+                confirmsBulkAccept = true
+            } label: {
+                Label("Accept \(confidentSuggestions.count) Confident", systemImage: "checkmark.seal")
+            }
+            .buttonStyle(.borderedProminent)
+            .help("Accept every AI suggestion at 90% confidence or higher")
         } else {
             Button {
                 appState.analyzeReview()
@@ -263,6 +351,54 @@ private struct ReviewTab: View {
             .buttonStyle(.borderedProminent)
             .disabled(appState.reviewSegments.isEmpty)
             .help("Ask \(appState.reviewAISettings.selectedHarness.displayName) to suggest rules")
+        }
+    }
+
+    @ViewBuilder
+    private var aiStatus: some View {
+        let run = appState.lastReviewAIRunSummary.flatMap { $0.automaticallyAppliedCount > 0 ? $0 : nil }
+        let suggestionCount = appState.reviewAISuggestions.count
+        let message: (text: String, isError: Bool)? = switch appState.reviewAIAnalysisState {
+        case .analyzing:
+            ("Analyzing with \(appState.reviewAISettings.selectedHarness.displayName)…", false)
+        case .failed(let message):
+            (message, true)
+        case .completed where suggestionCount == 0:
+            ("No AI suggestions this time. Classify the items below by hand.", false)
+        default:
+            suggestionCount > 0 ? ("\(suggestionCount) AI suggestion\(suggestionCount == 1 ? "" : "s") shown on the items below. Press A to accept one.", false) : nil
+        }
+
+        if message != nil || run != nil || appState.lastReviewAIUndoMessage != nil {
+            HStack(spacing: 8) {
+                Image(systemName: message?.isError == true ? "exclamationmark.triangle.fill" : "sparkles")
+                    .foregroundStyle(message?.isError == true ? Color.red : Color.purple)
+                if let message {
+                    Text(message.text)
+                        .foregroundStyle(message.isError ? Color.red : Color.secondary)
+                        .lineLimit(2)
+                }
+                if let undoMessage = appState.lastReviewAIUndoMessage {
+                    Text(undoMessage).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let run {
+                    Text("Auto-applied \(run.automaticallyAppliedCount) rule\(run.automaticallyAppliedCount == 1 ? "" : "s")")
+                        .foregroundStyle(.secondary)
+                    Button("View") { inspectingRun = run }
+                    if run.status == .completed {
+                        Button("Undo") { appState.undoLastReviewAIRun() }
+                    }
+                }
+                if suggestionCount > 0, sort != .suggested {
+                    Button("Show AI First") { sort = .suggested }
+                }
+            }
+            .font(.callout)
+            .controlSize(.small)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -282,107 +418,12 @@ private struct ReviewTab: View {
                 }
             }
             .padding(.vertical, 4)
-            .selectionDisabled()
         }
     }
 
-    private let collapsedSuggestionCount = 3
-
-    private var visibleSuggestions: [ReviewAISuggestion] {
-        let sorted = appState.reviewAISuggestions.sorted { $0.affectedDuration > $1.affectedDuration }
-        return showsAllSuggestions ? sorted : Array(sorted.prefix(collapsedSuggestionCount))
-    }
-
-    private var showsAISection: Bool {
-        appState.reviewAIAnalysisState != .idle
-            || !appState.reviewAISuggestions.isEmpty
-            || appState.lastReviewAIUndoMessage != nil
-            || (appState.lastReviewAIRunSummary?.automaticallyAppliedCount ?? 0) > 0
-    }
-
-    @ViewBuilder
-    private var reviewAISuggestionsSection: some View {
-        if showsAISection {
-            Section("AI suggestions") {
-                if let run = appState.lastReviewAIRunSummary,
-                   run.automaticallyAppliedCount > 0 {
-                    HStack {
-                        Text("Applied \(run.automaticallyAppliedCount) high-confidence rule\(run.automaticallyAppliedCount == 1 ? "" : "s") with \(run.harness.displayName).")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("View Applied") {
-                            inspectingRun = run
-                        }
-                        if run.status == .completed {
-                            Button("Undo") {
-                                appState.undoLastReviewAIRun()
-                            }
-                        } else {
-                            Text(run.status == .undone ? "Undone" : "Partially undone")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .controlSize(.small)
-                    .selectionDisabled()
-                }
-
-                if let message = appState.lastReviewAIUndoMessage {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .selectionDisabled()
-                }
-
-                switch appState.reviewAIAnalysisState {
-                case .idle:
-                    EmptyView()
-                case .analyzing:
-                    Label("Analyzing activity that needs review…", systemImage: "hourglass")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .selectionDisabled()
-                case .completed:
-                    if appState.reviewAISuggestions.isEmpty {
-                        Text("No suggestions this time. Classify the items below by hand.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .selectionDisabled()
-                    }
-                case .failed(let message):
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .font(.callout)
-                        .foregroundStyle(.red)
-                        .selectionDisabled()
-                }
-
-                ForEach(visibleSuggestions) { suggestion in
-                    ReviewAISuggestionRow(
-                        suggestion: suggestion,
-                        formattedDuration: formatter.compactDuration(suggestion.affectedDuration)
-                    ) { kind in
-                        appState.applyReviewAISuggestion(suggestion, as: kind)
-                    }
-                    .selectionDisabled()
-                }
-
-                if appState.reviewAISuggestions.count > collapsedSuggestionCount {
-                    Button(showsAllSuggestions
-                           ? "Show Fewer"
-                           : "Show All \(appState.reviewAISuggestions.count) Suggestions") {
-                        showsAllSuggestions.toggle()
-                    }
-                    .buttonStyle(.link)
-                    .selectionDisabled()
-                }
-            }
-        }
-    }
-
-    private func reviewItemsSection(_ groups: [AggregatedActivity]) -> some View {
+    private func reviewItemsSection(_ entries: [ReviewEntry], selectedID: String?) -> some View {
         Section {
-            if groups.isEmpty {
+            if entries.isEmpty {
                 ContentUnavailableView(
                     "Nothing to review",
                     systemImage: "checkmark.circle",
@@ -390,30 +431,47 @@ private struct ReviewTab: View {
                 )
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
-                .selectionDisabled()
             }
 
-            ForEach(groups) { group in
-                if let item = appState.reviewSegments.first(where: { group.segmentIDs.contains($0.id) }) {
-                    ReviewGroupRow(
-                        group: group,
-                        item: item,
-                        explanation: appState.classificationExplanation(for: item),
-                        recordingSummary: recordingSummary(for: group),
-                        duration: formatter.compactDuration(group.duration),
-                        rememberOptions: rememberOptions(for: item),
-                        classify: { kind in classify(group, as: kind, in: groups) },
-                        remember: { rememberingRule = $0 }
-                    )
-                    .tag(group.id)
+            ForEach(entries) { entry in
+                let isSelected = entry.id == selectedID
+                ReviewGroupRow(
+                    entry: entry,
+                    explanation: appState.classificationExplanation(for: entry.item),
+                    recordingSummary: recordingSummary(for: entry.group),
+                    duration: ReviewDuration.text(entry.group.duration, formatter: formatter),
+                    rememberOptions: rememberOptions(for: entry.item),
+                    showsActions: isSelected || entry.id == hoveredGroupID,
+                    classify: { kind in classify(entry, as: kind, in: entries) },
+                    accept: { suggestion in accept(suggestion, for: entry, in: entries) },
+                    remember: { rememberingRule = $0 }
+                )
+                .id(entry.id)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selectedGroupID = entry.id
+                    listHasKeyboardFocus = true
                 }
+                .onHover { hovering in
+                    if hovering {
+                        hoveredGroupID = entry.id
+                    } else if hoveredGroupID == entry.id {
+                        hoveredGroupID = nil
+                    }
+                }
+                .listRowBackground(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isSelected ? Color.accentColor.opacity(0.13) : Color.clear)
+                        .padding(.horizontal, 8)
+                )
+                .listRowSeparator(.hidden)
             }
         } header: {
-            if !groups.isEmpty {
+            if !entries.isEmpty {
                 HStack {
                     Text("Needs a decision")
                     Spacer()
-                    Text("↑ ↓ to move · W Work · P Personal · I Ignore")
+                    Text("↑ ↓ move · W Work · P Personal · I Ignore · A Accept AI")
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -442,60 +500,82 @@ private struct ReviewTab: View {
     }
 }
 
+private enum ReviewDuration {
+    static func text(_ duration: TimeInterval, formatter: TimeFormatting) -> String {
+        duration < 60 ? "<1m" : formatter.compactDuration(duration)
+    }
+}
+
+private enum ReviewSuggestionChoice {
+    static func kind(_ suggestion: ReviewAISuggestion) -> ActivityKind? {
+        switch suggestion.kind {
+        case .work: .work
+        case .personal: .personal
+        case .ignored: .ignored
+        case .unsure: nil
+        }
+    }
+
+    static func canAccept(_ suggestion: ReviewAISuggestion) -> Bool {
+        kind(suggestion) != nil && ReviewAISuggestionValidator().validationResult(for: suggestion).canApply
+    }
+}
+
 private struct ReviewGroupRow: View {
-    let group: AggregatedActivity
-    let item: ClassifiedSegment
+    let entry: ReviewEntry
     let explanation: String
     let recordingSummary: String
     let duration: String
     let rememberOptions: [Rule]
+    let showsActions: Bool
     let classify: (ActivityKind) -> Void
+    let accept: (ReviewAISuggestion) -> Void
     let remember: (Rule) -> Void
 
-    private var segment: ActivitySegment { item.segment }
+    private var segment: ActivitySegment { entry.item.segment }
 
     private var title: String {
         if !segment.snapshot.host.isEmpty { return segment.snapshot.host }
         return segment.windowTitle.isEmpty ? segment.appName : segment.windowTitle
     }
 
-    private var subtitle: String {
-        let detail = segment.windowTitle.isEmpty ? "Window title unavailable" : segment.windowTitle
-        return title == segment.windowTitle ? segment.appName : "\(segment.appName) · \(detail)"
+    private var meta: String {
+        var parts: [String] = []
+        if title != segment.appName { parts.append(segment.appName) }
+        if !segment.windowTitle.isEmpty, title != segment.windowTitle { parts.append(segment.windowTitle) }
+        parts.append(recordingSummary)
+        return parts.joined(separator: " · ")
+    }
+
+    private var showsExplanation: Bool {
+        explanation.hasPrefix("Conflicting rules")
+    }
+
+    private var tooltip: String {
+        [segment.url, explanation].compactMap { $0 }.joined(separator: "\n")
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            AppIconView(bundleIdentifier: segment.snapshot.bundleIdentifier)
-                .padding(.top, 2)
+        HStack(alignment: .center, spacing: 12) {
+            AppIconView(bundleIdentifier: segment.snapshot.bundleIdentifier, size: 30)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text(duration)
-                        .font(.headline.monospacedDigit())
-                }
-
-                Text(subtitle)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
                     .lineLimit(1)
-                    .truncationMode(.tail)
+                    .truncationMode(.middle)
+
+                Text(meta)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-
-                if let url = segment.url {
-                    Text(url)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-
-                Text("\(recordingSummary) · \(explanation)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
                     .lineLimit(1)
+
+                if showsExplanation {
+                    Text(explanation)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                }
 
                 if segment.snapshot.isDiscordWithoutTitle {
                     Text("Channel titles were not captured. Your choice applies only to these recordings.")
@@ -503,58 +583,117 @@ private struct ReviewGroupRow: View {
                         .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 6) {
-                    Button {
-                        classify(.work)
-                    } label: {
-                        Label("Work", systemImage: "briefcase")
-                    }
-                    .help("Mark these recordings as Work (W)")
+                if let suggestion = entry.suggestion {
+                    SuggestionLine(suggestion: suggestion)
+                }
+            }
+            .help(tooltip)
 
-                    Button {
-                        classify(.personal)
-                    } label: {
-                        Label("Personal", systemImage: "person")
-                    }
-                    .help("Mark these recordings as Personal (P)")
+            Spacer(minLength: 12)
 
-                    Button(role: .destructive) {
-                        classify(.ignored)
-                    } label: {
-                        Label("Ignore", systemImage: "eye.slash")
-                    }
-                    .help("Delete these recordings so they never count (I)")
+            actions
+                .opacity(showsActions ? 1 : 0)
+                .allowsHitTesting(showsActions)
 
-                    if !rememberOptions.isEmpty {
-                        Menu {
-                            ForEach([ActivityKind.work, .personal]) { kind in
-                                let options = rememberOptions.filter { $0.action.kind == kind }
-                                if !options.isEmpty {
-                                    Section("Always \(kind.displayName)") {
-                                        ForEach(options) { rule in
-                                            Button(optionTitle(rule)) { remember(rule) }
-                                        }
-                                    }
+            Text(duration)
+                .font(.body.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 40, alignment: .trailing)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var actions: some View {
+        HStack(spacing: 6) {
+            if let suggestion = entry.suggestion,
+               ReviewSuggestionChoice.canAccept(suggestion),
+               let kind = ReviewSuggestionChoice.kind(suggestion) {
+                Button {
+                    accept(suggestion)
+                } label: {
+                    Label(kind == .ignored ? "Accept Ignore" : "Accept \(kind.displayName)", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Create the suggested rule and file \(suggestion.affectedCount) recording\(suggestion.affectedCount == 1 ? "" : "s") (A)")
+            }
+
+            Button("Work") { classify(.work) }
+                .help("Mark these recordings as Work (W)")
+            Button("Personal") { classify(.personal) }
+                .help("Mark these recordings as Personal (P)")
+            Button(role: .destructive) {
+                classify(.ignored)
+            } label: {
+                Image(systemName: "eye.slash")
+                    .accessibilityLabel("Ignore")
+            }
+            .help("Delete these recordings so they never count (I)")
+
+            if !rememberOptions.isEmpty {
+                Menu {
+                    ForEach([ActivityKind.work, .personal]) { kind in
+                        let options = rememberOptions.filter { $0.action.kind == kind }
+                        if !options.isEmpty {
+                            Section("Always \(kind.displayName)") {
+                                ForEach(options) { rule in
+                                    Button(optionTitle(rule)) { remember(rule) }
                                 }
                             }
-                        } label: {
-                            Label("Always…", systemImage: "wand.and.stars")
                         }
-                        .fixedSize()
-                        .help("Create a rule so matching activity is classified automatically, including past recordings")
                     }
+                } label: {
+                    Image(systemName: "wand.and.stars")
+                        .accessibilityLabel("Always")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .padding(.top, 4)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Always classify matching activity this way, including past recordings")
             }
         }
-        .padding(.vertical, 8)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
     }
 
     private func optionTitle(_ rule: Rule) -> String {
         let name = rule.name.hasPrefix("Remember ") ? String(rule.name.dropFirst("Remember ".count)) : rule.name
         return name.prefix(1).uppercased() + name.dropFirst()
+    }
+}
+
+private struct SuggestionLine: View {
+    let suggestion: ReviewAISuggestion
+
+    private var color: Color {
+        switch suggestion.kind {
+        case .work: .blue
+        case .personal: .green
+        case .ignored: .gray
+        case .unsure: .orange
+        }
+    }
+
+    private var label: String {
+        switch suggestion.kind {
+        case .unsure: "AI unsure"
+        case .ignored: "AI: Ignore"
+        default: "AI: \(suggestion.kind.displayName)"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Label(label, systemImage: "sparkles")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
+            Text("\(Int(round(suggestion.confidence * 100)))%")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Text(suggestion.reason)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .help(suggestion.reason)
     }
 }
 
@@ -656,173 +795,6 @@ private struct AppliedReviewRulesView: View {
             "Changed after analysis"
         case .removed:
             "Removed"
-        }
-    }
-}
-
-private struct ReviewAISuggestionRow: View {
-    let suggestion: ReviewAISuggestion
-    let formattedDuration: String
-    let apply: (ReviewAISuggestionKind) -> Void
-
-    private let validator = ReviewAISuggestionValidator()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: symbolName)
-                    .foregroundStyle(color)
-                Text(title)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(suggestionTitle)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(color)
-                Spacer(minLength: 8)
-                Text("\(suggestion.affectedCount) item\(suggestion.affectedCount == 1 ? "" : "s") · \(formattedDuration) · \(Int(round(suggestion.confidence * 100)))% sure")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(suggestion.reason)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .help(detail)
-
-            HStack(spacing: 6) {
-                choiceButton(.work, title: "Work", symbol: "briefcase")
-                choiceButton(.personal, title: "Personal", symbol: "person")
-                choiceButton(.ignored, title: "Ignore", symbol: "eye.slash")
-
-                if let message = validationMessage {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .padding(.leading, 4)
-                }
-            }
-            .controlSize(.small)
-            .padding(.top, 2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 6)
-    }
-
-    @ViewBuilder
-    private func choiceButton(_ kind: ReviewAISuggestionKind, title: String, symbol: String) -> some View {
-        let isSuggested = kind == suggestion.kind && canApply(kind)
-        let button = Button(role: kind == .ignored ? .destructive : nil) {
-            apply(kind)
-        } label: {
-            Label(isSuggested ? "Accept \(title)" : title, systemImage: symbol)
-        }
-        .disabled(!canApply(kind))
-
-        if isSuggested {
-            button.buttonStyle(.borderedProminent)
-        } else {
-            button.buttonStyle(.bordered)
-        }
-    }
-
-    private var title: String {
-        if let condition = suggestion.proposedRuleCondition {
-            return condition.value
-        }
-        guard let sample = suggestion.samples.first else { return "Activity" }
-        return sample.windowTitle.isEmpty ? sample.appName : sample.windowTitle
-    }
-
-    private var detail: String {
-        var lines = [suggestion.reason]
-        if let condition = suggestion.proposedRuleCondition {
-            lines.append("Rule: \(condition.field.displayName) \(condition.operation.displayName) \(condition.value)")
-        }
-        if let sample = suggestion.samples.first {
-            lines.append("Example: \(sample.windowTitle.isEmpty ? sample.appName : sample.windowTitle)")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private func canApply(_ kind: ReviewAISuggestionKind) -> Bool {
-        validation(for: kind).canApply
-    }
-
-    private func validation(for kind: ReviewAISuggestionKind) -> ReviewAISuggestionValidationResult {
-        var correctedSuggestion = suggestion
-        correctedSuggestion.kind = kind
-        return validator.validationResult(for: correctedSuggestion)
-    }
-
-    private var validationMessage: String? {
-        if suggestion.kind == .ignored {
-            return "Ignored suggestions are never applied automatically."
-        }
-
-        if suggestion.kind == .unsure {
-            return "Choose Work or Personal to apply."
-        }
-
-        let workValidation = validation(for: .work)
-        let personalValidation = validation(for: .personal)
-        guard !workValidation.canApply, !personalValidation.canApply else {
-            return nil
-        }
-
-        if let message = validationMessage(for: workValidation) {
-            return message
-        }
-
-        return validationMessage(for: personalValidation)
-    }
-
-    private func validationMessage(for validation: ReviewAISuggestionValidationResult) -> String? {
-        switch validation {
-        case .applyAllowed:
-            nil
-        case .manualOnly(let message), .rejected(let message):
-            message
-        }
-    }
-
-    private var symbolName: String {
-        switch suggestion.kind {
-        case .work:
-            "briefcase"
-        case .personal:
-            "person"
-        case .ignored:
-            "eye.slash"
-        case .unsure:
-            "questionmark.circle"
-        }
-    }
-
-    private var suggestionTitle: String {
-        switch suggestion.kind {
-        case .work:
-            "Work?"
-        case .personal:
-            "Personal?"
-        case .ignored:
-            "Ignore?"
-        case .unsure:
-            "Unsure"
-        }
-    }
-
-    private var color: Color {
-        switch suggestion.kind {
-        case .work:
-            .blue
-        case .personal:
-            .green
-        case .ignored:
-            .gray
-        case .unsure:
-            .orange
         }
     }
 }

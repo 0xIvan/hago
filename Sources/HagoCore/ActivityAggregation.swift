@@ -104,7 +104,7 @@ public enum ActivityAggregation {
         for item in segments {
             let name = displayName(for: item.segment)
             let key = [
-                matchingWindows ? item.segment.snapshot.normalizedSignature : name.lowercased(),
+                matchingWindows ? reviewSignature(for: item.segment.snapshot) : name.lowercased(),
                 item.segment.appName.lowercased(),
                 item.classification.kind.rawValue,
                 item.categoryName ?? "",
@@ -140,6 +140,16 @@ public enum ActivityAggregation {
         }
 
         return Array(groups.values)
+    }
+
+    private static func reviewSignature(for snapshot: ActivitySnapshot) -> String {
+        var countless = snapshot
+        countless.windowTitle = snapshot.windowTitle.replacingOccurrences(
+            of: "[0-9]+([.,][0-9]+)*",
+            with: "#",
+            options: .regularExpression
+        )
+        return countless.normalizedSignature
     }
 
     private static func displayName(for segment: ActivitySegment) -> String {
