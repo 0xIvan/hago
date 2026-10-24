@@ -12,8 +12,8 @@ enum HagoSection: String, CaseIterable, Identifiable, Hashable {
     case privacy
     case aiReview
 
-    static let primarySections: [Self] = [.overview, .reports, .review, .activity, .tracking, .rules, .privacy, .aiReview]
-    static let advancedSections: [Self] = [.projects, .categories]
+    static let primarySections: [Self] = [.overview, .review, .activity, .reports]
+    static let settingsSections: [Self] = [.tracking, .rules, .privacy, .aiReview, .projects, .categories]
 
     var id: String {
         rawValue
@@ -21,13 +21,14 @@ enum HagoSection: String, CaseIterable, Identifiable, Hashable {
 
     var title: String {
         switch self {
-        case .tracking: "Tracking & Updates"
+        case .tracking:
+            "General"
         case .overview:
             "Overview"
         case .reports:
             "Reports"
         case .review:
-            "Needs review"
+            "Review"
         case .aiReview:
             "AI suggestions"
         case .activity:
@@ -45,25 +46,26 @@ enum HagoSection: String, CaseIterable, Identifiable, Hashable {
 
     var symbolName: String {
         switch self {
-        case .tracking: "gearshape"
+        case .tracking:
+            "gearshape"
         case .overview:
             "chart.bar.xaxis"
         case .reports:
             "chart.xyaxis.line"
         case .review:
-            "checklist"
+            "tray.full"
         case .aiReview:
-            "cpu"
+            "sparkles"
         case .activity:
             "clock.arrow.circlepath"
         case .rules:
-            "line.3.horizontal.decrease.circle"
+            "list.bullet.rectangle"
         case .projects:
             "folder"
         case .categories:
             "tag"
         case .privacy:
-            "eye.slash"
+            "hand.raised"
         }
     }
 }

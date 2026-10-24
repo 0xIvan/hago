@@ -1,6 +1,8 @@
-- Restored one Hago window with all sections in the sidebar, keeping update checks and the improved onboarding app picker.
-- Specific site, title, and project rules now take precedence over whole-app work defaults. Ignore rules still win, and manual corrections stay unchanged.
-- Combined Specific Rules and Work Defaults in Rules, with clear precedence guidance. Moved Projects and Categories into Advanced to simplify the sidebar.
+- Reorganized the sidebar into your views (Overview, Review, Activity, Reports) and Settings (General, Rules, Privacy, AI suggestions, Projects, Categories).
+- Review is faster to clear: the first item is selected so W / P / I work right away, the next item stays selected after each decision, items can be sorted by longest, and each row shows the app icon with an Always… shortcut for creating rules.
+- AI suggestions show the top three by time with a one-click Accept for the suggested choice; the rest are one click away.
+- Rules has one search field and a single Filter menu, on/off switches and result badges. The rule editor now edits every condition, so "this page" rules keep both host and URL.
+- Privacy now holds permissions, what is always private, and a "Never record" list that shows the actual app, site, or title, with an Add menu for each kind.
 
 Download the universal DMG, open it and drag Hago to Applications. The app and DMG are Developer ID signed and notarized. Requires macOS 14 or newer; supports Apple Silicon and Intel.
 

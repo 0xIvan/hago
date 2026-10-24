@@ -1,33 +1,36 @@
 import SwiftUI
 import HagoCore
 
-struct ClassificationLearningPanel: View {
+struct LearningSuggestionsSection: View {
     @EnvironmentObject private var appState: AppState
     @State private var remembering: Rule?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let message = appState.correctionMessage {
-                Text(message).font(.caption).foregroundStyle(.secondary)
-            }
-            if appState.latestCorrectionActionID != nil {
-                Button("Undo Last Correction or Learned Rule") { appState.undoLatestCorrection() }
-            }
-            ForEach(appState.learningSuggestions.prefix(5)) { suggestion in
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(suggestion.rule.name)
-                        Text("Consistent corrections across \(suggestion.days) days → \(suggestion.rule.action.kind.displayName)")
-                            .font(.caption).foregroundStyle(.secondary)
+        if !appState.learningSuggestions.isEmpty {
+            Section("Hago noticed a pattern") {
+                ForEach(appState.learningSuggestions.prefix(5)) { suggestion in
+                    HStack(spacing: 12) {
+                        Image(systemName: "lightbulb")
+                            .foregroundStyle(.yellow)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(suggestion.rule.name)
+                            Text("You picked \(suggestion.rule.action.kind.displayName) on \(suggestion.days) days. Make it a rule?")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Dismiss") { appState.dismissLearningSuggestion(suggestion) }
+                        Button("Preview Rule…") { remembering = suggestion.rule }
+                            .buttonStyle(.borderedProminent)
                     }
-                    Spacer()
-                    Button("Preview") { remembering = suggestion.rule }
-                    Button("Dismiss") { appState.dismissLearningSuggestion(suggestion) }
+                    .controlSize(.small)
+                    .padding(.vertical, 4)
+                    .selectionDisabled()
                 }
             }
-        }
-        .sheet(item: $remembering) { rule in
-            RememberRulePreviewView(rule: rule).environmentObject(appState)
+            .sheet(item: $remembering) { rule in
+                RememberRulePreviewView(rule: rule).environmentObject(appState)
+            }
         }
     }
 }
@@ -41,28 +44,58 @@ struct RememberRulePreviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(rule.name).font(.title2.bold())
-            Text("Future matches will be \(rule.action.kind.displayName).")
-            ForEach(rule.conditions) { condition in
-                Text("\(condition.field.displayName) \(condition.operation.displayName) \(condition.value)")
-                    .font(.callout).textSelection(.enabled)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Always \(rule.action.kind.displayName)")
+                    .font(.title2.bold())
+                Text("Activity matching this rule will be classified automatically from now on.")
+                    .foregroundStyle(.secondary)
             }
-            if let preview {
-                Text("Applies to \(preview.affectedCount) historical recordings (\(TimeFormatting().compactDuration(preview.affectedSeconds))).")
-                Text("Explicit corrections and project assignments stay unchanged. Conflicting rules remain Needs review.")
-                    .font(.caption).foregroundStyle(.secondary)
-                ForEach(Array(preview.examples.enumerated()), id: \.offset) { _, example in
-                    Text(example).font(.caption).lineLimit(2)
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(rule.conditions) { condition in
+                    HStack(spacing: 6) {
+                        Text(condition.field.displayName)
+                            .foregroundStyle(.secondary)
+                        Text(condition.operation.displayName)
+                            .foregroundStyle(.secondary)
+                        Text(condition.value)
+                            .fontWeight(.medium)
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+
+            if let preview {
+                Label(
+                    "Also reclassifies \(preview.affectedCount) past recordings (\(TimeFormatting().compactDuration(preview.affectedSeconds))).",
+                    systemImage: "clock.arrow.circlepath"
+                )
+                if !preview.examples.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(preview.examples.enumerated()), id: \.offset) { _, example in
+                            Text(example).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                }
+                Text("Your manual corrections and project assignments stay unchanged. Conflicting rules stay in Review.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let previewError { Text(previewError).foregroundStyle(.red) }
             HStack {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Remember and Apply") {
+                Button("Create Rule") {
                     appState.rememberRule(rule)
                     if appState.errorMessage == nil { dismiss() }
-                }.disabled(preview == nil).keyboardShortcut(.defaultAction)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(preview == nil)
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24).frame(width: 540)

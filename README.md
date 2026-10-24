@@ -130,7 +130,7 @@ swift build -c release --product Hago
 
 Download the universal DMG from [GitHub Releases](https://github.com/0xIvan/hago/releases/latest), open it, and drag Hago to Applications. Release apps and DMGs are Developer ID signed and notarized. Requires macOS 14 or newer on Apple Silicon or Intel.
 
-Choose **Hago → Check for Updates…** in the app menu, or select **Tracking & Updates** in Hago's sidebar. **Hago → Settings…** (⌘,) opens that section in the same window. Sparkle verifies the signed update feed and download before asking to install. Checks are manual; activity and profile data are never sent to the release service.
+Choose **Hago → Check for Updates…** in the app menu, or select **General** in Hago's sidebar. **Hago → Settings…** (⌘,) opens that section in the same window. Sparkle verifies the signed update feed and download before asking to install. Checks are manual; activity and profile data are never sent to the release service.
 
 The optional Terminal installer verifies the release checksum, bundle identity, signing team, notarization ticket and Gatekeeper assessment before replacing the installed app:
 
