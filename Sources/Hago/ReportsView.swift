@@ -11,13 +11,36 @@ struct ReportsView: View {
     private let formatter = TimeFormatting()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            reportControls
+        VStack(spacing: 0) {
+            PageTop {
+                PageHeader(
+                    title: reportPair.map { periodTitle($0.current) } ?? mode.title,
+                    subtitle: reportPair.map { pair in
+                        "Compared with \(periodTitle(pair.previous))\(pair.window.comparesElapsedPortion ? " · same elapsed portion" : "")"
+                    }
+                ) {
+                    Picker("Period", selection: $mode) {
+                        ForEach(ReportMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+
+                    PeriodNavigator(
+                        currentTitle: mode == .weeks ? "This Week" : "This Month",
+                        isCurrent: isCurrentPeriod,
+                        canGoForward: !isCurrentPeriod,
+                        step: shiftPeriod(by:),
+                        reset: { anchorDate = Date() }
+                    )
+                }
+            }
 
             if let reportPair {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        reportHeader(reportPair.current, previous: reportPair.previous)
                         reportMetrics(reportPair.current, previous: reportPair.previous)
 
                         SectionPanel(title: mode.chartTitle) {
@@ -44,10 +67,11 @@ struct ReportsView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
                 }
             } else {
-                Text("No report data")
-                    .foregroundStyle(.secondary)
+                ContentUnavailableView("No report data", systemImage: "chart.xyaxis.line")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onAppear(perform: reloadReport)
@@ -59,50 +83,10 @@ struct ReportsView: View {
         }
     }
 
-    private var reportControls: some View {
-        WrappingHStack(horizontalSpacing: 12, verticalSpacing: 8) {
-            Picker("Period", selection: $mode) {
-                ForEach(ReportMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 180)
-
-            Button {
-                shiftPeriod(by: -1)
-            } label: {
-                Label("Previous", systemImage: "chevron.left")
-            }
-            .labelStyle(.iconOnly)
-
-            Text(reportPair.map { periodTitle($0.current) } ?? mode.title)
-                .font(.headline)
-                .monospacedDigit()
-                .frame(minWidth: 220, alignment: .center)
-
-            Button {
-                shiftPeriod(by: 1)
-            } label: {
-                Label("Next", systemImage: "chevron.right")
-            }
-            .labelStyle(.iconOnly)
-
-            Button {
-                anchorDate = Date()
-            } label: {
-                Label("Today", systemImage: "calendar")
-            }
-        }
-    }
-
-    private func reportHeader(_ report: ReportSummary, previous: ReportSummary) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(periodTitle(report))
-                .font(.title2.weight(.semibold))
-            Text("Compared with \(periodTitle(previous))\(reportPair?.window.comparesElapsedPortion == true ? " · same elapsed portion" : "")")
-                .foregroundStyle(.secondary)
-        }
+    private var isCurrentPeriod: Bool {
+        guard let current = reportPair?.current else { return true }
+        let now = Date()
+        return current.startDate <= now && now < current.endDate
     }
 
     private func reportMetrics(_ report: ReportSummary, previous: ReportSummary) -> some View {

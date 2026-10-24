@@ -804,20 +804,19 @@ final class AppState: ObservableObject {
         }
     }
 
-    func updateSegmentClassification(_ segment: ClassifiedSegment, as kind: ActivityKind) {
+    func reclassifyActivity(segmentIDs: [UUID], as kind: ActivityKind) {
         guard flushTracking() else { return }
-        guard kind != .review else {
+        guard kind != .review, !segmentIDs.isEmpty else {
             return
         }
 
         let categoryID = categories.first { $0.kind == kind }?.id
 
         do {
-            if kind == .ignored {
-                try store?.ignoreSegment(id: segment.id)
-            } else {
-                _ = try store?.correctSegments(ids: [segment.id], kind: kind, categoryID: categoryID)
-            }
+            _ = try store?.correctSegments(ids: segmentIDs, kind: kind, categoryID: categoryID)
+            correctionMessage = kind == .ignored
+                ? "Removed \(segmentIDs.count) recording\(segmentIDs.count == 1 ? "" : "s") permanently."
+                : "Marked \(segmentIDs.count) recording\(segmentIDs.count == 1 ? "" : "s") as \(kind.displayName)."
 
             try refresh()
             clearReviewAISuggestions()

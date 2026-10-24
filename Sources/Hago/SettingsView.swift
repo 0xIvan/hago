@@ -4,6 +4,7 @@ import HagoCore
 
 struct RulesSettingsView: View {
     @EnvironmentObject private var appState: AppState
+    @Binding var pane: RulesPane
     @State private var editingRule: Rule?
     @State private var searchText = ""
     @State private var kindFilter = RuleKindFilter.all
@@ -30,9 +31,15 @@ struct RulesSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+            PageTop {
+                PageHeader(
+                    title: "\(specificRecords.count) specific rule\(specificRecords.count == 1 ? "" : "s")",
+                    subtitle: RulesPane.rules.caption
+                ) {
+                    RulesPanePicker(selection: $pane)
+                }
+                toolbar
+            }
 
             List {
                 if displayedRecords.isEmpty {
@@ -86,26 +93,14 @@ struct RulesSettingsView: View {
 
     private var toolbar: some View {
         HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Search rules, sites, apps", text: $searchText)
-                    .textFieldStyle(.plain)
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 7))
+            SearchField(text: $searchText, prompt: "Search rules, sites, apps")
 
-            Menu {
+            FilterMenu(activeCount: activeFilterCount, clear: {
+                kindFilter = .all
+                statusFilter = .all
+                sourceFilter = .all
+                fieldFilter = .all
+            }) {
                 Picker("Result", selection: $kindFilter) {
                     ForEach(RuleKindFilter.allCases) { filter in
                         Text(filter.title).tag(filter)
@@ -126,24 +121,7 @@ struct RulesSettingsView: View {
                         Text(filter.title).tag(filter)
                     }
                 }
-                if activeFilterCount > 0 {
-                    Divider()
-                    Button("Clear Filters") {
-                        kindFilter = .all
-                        statusFilter = .all
-                        sourceFilter = .all
-                        fieldFilter = .all
-                    }
-                }
-            } label: {
-                Label(
-                    activeFilterCount == 0 ? "Filter" : "Filter (\(activeFilterCount))",
-                    systemImage: activeFilterCount == 0
-                        ? "line.3.horizontal.decrease.circle"
-                        : "line.3.horizontal.decrease.circle.fill"
-                )
             }
-            .fixedSize()
 
             Button {
                 editingRule = Rule(
@@ -293,32 +271,6 @@ enum RuleDescription {
         rule.conditions
             .map { "\($0.field.displayName) \($0.operation.displayName) \($0.value)" }
             .joined(separator: " and ")
-    }
-}
-
-struct ActivityKindBadge: View {
-    let kind: ActivityKind
-
-    var body: some View {
-        Text(kind.displayName)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .foregroundStyle(color)
-            .background(color.opacity(0.15), in: Capsule())
-    }
-
-    private var color: Color {
-        switch kind {
-        case .work:
-            .blue
-        case .personal:
-            .green
-        case .review:
-            .orange
-        case .ignored:
-            .secondary
-        }
     }
 }
 
@@ -688,7 +640,7 @@ struct RuleEditorView: View {
             }
             .padding([.horizontal, .bottom], 20)
         }
-        .frame(minWidth: 600, maxWidth: 600, minHeight: 480)
+        .frame(minWidth: 600, maxWidth: 600, minHeight: 400)
     }
 
     private var suggestedName: String {
@@ -734,44 +686,48 @@ struct RuleEditorView: View {
     }
 }
 
-struct RulesManagementView: View {
-    @State private var selection = Pane.rules
+enum RulesPane: String, CaseIterable, Identifiable {
+    case rules = "Specific Rules"
+    case defaults = "Work Defaults"
 
-    private enum Pane: String, CaseIterable, Identifiable {
-        case rules = "Specific Rules"
-        case defaults = "Work Defaults"
+    var id: Self { self }
 
-        var id: Self { self }
-
-        var caption: String {
-            switch self {
-            case .rules:
-                "Rules for particular sites, pages, window titles and apps. They win over work defaults. Ignore rules live in Privacy."
-            case .defaults:
-                "Apps and sites that count as Work unless a specific rule says otherwise."
-            }
+    var caption: String {
+        switch self {
+        case .rules:
+            "Rules for particular sites, pages, window titles and apps. They win over work defaults. Ignore rules live in Privacy."
+        case .defaults:
+            "Apps and sites that count as Work unless a specific rule says otherwise."
         }
     }
+}
+
+private struct RulesPanePicker: View {
+    @Binding var selection: RulesPane
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                Picker("Configure", selection: $selection) {
-                    ForEach(Pane.allCases) { pane in Text(pane.rawValue).tag(pane) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                Text(selection.caption)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
+        Picker("Configure", selection: $selection) {
+            ForEach(RulesPane.allCases) { pane in Text(pane.rawValue).tag(pane) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+    }
+}
 
-            if selection == .rules {
-                RulesSettingsView()
+struct RulesManagementView: View {
+    @State private var pane = RulesPane.rules
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if pane == .rules {
+                RulesSettingsView(pane: $pane)
             } else {
+                PageTop {
+                    PageHeader(title: "Work defaults", subtitle: RulesPane.defaults.caption) {
+                        RulesPanePicker(selection: $pane)
+                    }
+                }
                 WorkProfileView()
             }
         }
@@ -783,15 +739,19 @@ struct ProjectsSettingsView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Projects")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                Button {
-                    appState.saveProject(Project(name: "New Project", colorHex: "#2563EB", isArchived: false))
-                } label: {
-                    Label("Add Project", systemImage: "plus")
+        let activeCount = appState.projects.filter { !$0.isArchived }.count
+        VStack(spacing: 0) {
+            PageTop {
+                PageHeader(
+                    title: "\(activeCount) active project\(activeCount == 1 ? "" : "s")",
+                    subtitle: "Assign a project in a rule to see its time in Reports. Archived projects keep their history."
+                ) {
+                    Button {
+                        appState.saveProject(Project(name: "New Project", colorHex: "#2563EB", isArchived: false))
+                    } label: {
+                        Label("Add Project", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
 
@@ -799,6 +759,7 @@ struct ProjectsSettingsView: View {
                 ProjectEditorRow(project: project)
                     .environmentObject(appState)
             }
+            .listStyle(.inset)
         }
     }
 }
@@ -846,15 +807,18 @@ struct CategoriesSettingsView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Categories")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                Button {
-                    appState.saveCategory(HagoCore.Category(name: "New Category", kind: .work, colorHex: "#2563EB"))
-                } label: {
-                    Label("Add Category", systemImage: "plus")
+        VStack(spacing: 0) {
+            PageTop {
+                PageHeader(
+                    title: "\(appState.categories.count) categor\(appState.categories.count == 1 ? "y" : "ies")",
+                    subtitle: "Each category counts toward Work or Personal time."
+                ) {
+                    Button {
+                        appState.saveCategory(HagoCore.Category(name: "New Category", kind: .work, colorHex: "#2563EB"))
+                    } label: {
+                        Label("Add Category", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
 
@@ -862,6 +826,7 @@ struct CategoriesSettingsView: View {
                 CategoryEditorRow(category: category)
                     .environmentObject(appState)
             }
+            .listStyle(.inset)
         }
     }
 }

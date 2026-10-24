@@ -1,6 +1,8 @@
-- Review shows each AI suggestion on the item it belongs to instead of in a separate list. Press A or click Accept to take it, sort with AI First, or accept every Work or Personal suggestion at 90% confidence or higher in one step.
-- Review rows are compact: a light selection color, actions on the selected or hovered row, ↑ ↓ to move, "<1m" for short items, and a warning line only for conflicting rules.
-- Review merges near-identical items whose window titles differ only by numbers, such as unread counts in Mail.
+- Activity is redesigned: Work, Personal and Needs review chips show the day's totals and filter the list, with search, a project filter, sorting and By App / Timeline views in one toolbar.
+- Step between days with ‹ Today ›, or jump to any date with the calendar button.
+- Hover a row to mark it Work or Personal, or remove it. Removing asks for confirmation first, and you can undo a reclassification from the banner.
+- Rows show the app icon, project, time range and a bar sized by duration. Clicking a row opens a cleaner details sheet for its rule.
+- Overview, Review, Activity, Reports, Rules, Projects and Categories now share the same page header, search field, filter menu and period controls.
 
 Download the universal DMG, open it and drag Hago to Applications. The app and DMG are Developer ID signed and notarized. Requires macOS 14 or newer; supports Apple Silicon and Intel.
 

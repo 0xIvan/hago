@@ -25,7 +25,6 @@ struct DashboardView: View {
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
         } detail: {
             selectedSectionView
-                .padding([.review, .rules, .tracking, .privacy].contains(appState.selectedSection) ? 0 : 20)
                 .navigationTitle(appState.selectedSection.title)
         }
         .frame(minWidth: 850, minHeight: 650)
@@ -82,6 +81,31 @@ private struct OverviewTab: View {
     private let formatter = TimeFormatting()
 
     var body: some View {
+        VStack(spacing: 0) {
+            PageTop {
+                PageHeader(
+                    title: "Today",
+                    subtitle: "\(appState.todaySummary.date.formatted(.dateTime.weekday(.wide).day().month(.wide))) · \(HagoDuration.text(appState.todayTrackedSeconds)) tracked"
+                ) {
+                    if !appState.reviewGroups.isEmpty {
+                        Button {
+                            appState.selectedSection = .review
+                        } label: {
+                            Label("Review \(appState.reviewGroups.count)", systemImage: HagoSection.review.symbolName)
+                        }
+                    }
+                    Button {
+                        appState.selectedSection = .activity
+                    } label: {
+                        Label("Activity", systemImage: HagoSection.activity.symbolName)
+                    }
+                }
+            }
+            content
+        }
+    }
+
+    private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if !appState.accessibilityTrusted {
@@ -89,9 +113,9 @@ private struct OverviewTab: View {
                 }
 
                 HStack(spacing: 12) {
-                    MetricView(title: "Work", value: formatter.compactDuration(appState.todaySummary.workSeconds), color: .blue)
-                    MetricView(title: "Personal", value: formatter.compactDuration(appState.todaySummary.personalSeconds), color: .green)
-                    MetricView(title: ActivityKind.review.displayName, value: formatter.compactDuration(appState.todaySummary.reviewSeconds), color: .orange)
+                    MetricView(title: "Work", value: formatter.compactDuration(appState.todaySummary.workSeconds), color: ActivityKind.work.tint)
+                    MetricView(title: "Personal", value: formatter.compactDuration(appState.todaySummary.personalSeconds), color: ActivityKind.personal.tint)
+                    MetricView(title: ActivityKind.review.displayName, value: formatter.compactDuration(appState.todaySummary.reviewSeconds), color: ActivityKind.review.tint)
                 }
 
                 HStack(alignment: .top, spacing: 16) {
@@ -111,7 +135,7 @@ private struct OverviewTab: View {
                                 VStack(alignment: .leading, spacing: 10) {
                                     Text(kind.displayName)
                                         .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(kind == .work ? .blue : .green)
+                                        .foregroundStyle(kind.tint)
                                     BucketListView(buckets: appState.todaySummary.topApps.filter { $0.kind == kind })
                                 }
                             }
@@ -119,6 +143,7 @@ private struct OverviewTab: View {
                     }
                 }
             }
+            .padding(20)
         }
     }
 }
@@ -156,7 +181,6 @@ private struct ReviewTab: View {
     @State private var sort = ReviewSort.recent
     @State private var confirmsBulkAccept = false
     @FocusState private var listHasKeyboardFocus: Bool
-    private let formatter = TimeFormatting()
 
     private var entries: [ReviewEntry] {
         let suggestionsByID = Dictionary(
@@ -202,10 +226,9 @@ private struct ReviewTab: View {
         let selectedID = selectedID(in: entries)
         VStack(spacing: 0) {
             header(entries)
-            Divider()
             ScrollViewReader { proxy in
                 List {
-                    correctionBanner
+                    CorrectionBanner()
                     LearningSuggestionsSection()
                     reviewItemsSection(entries, selectedID: selectedID)
                 }
@@ -286,20 +309,13 @@ private struct ReviewTab: View {
     }
 
     private func header(_ entries: [ReviewEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(entries.isEmpty ? "All caught up" : "\(entries.count) to review")
-                        .font(.title2.weight(.semibold))
-                    Text(entries.isEmpty
-                         ? "New activity Hago can't classify will show up here."
-                         : "\(ReviewDuration.text(entries.reduce(0) { $0 + $1.group.duration }, formatter: formatter)) unclassified across \(appState.reviewSegments.count) recordings")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
+        PageTop {
+            PageHeader(
+                title: entries.isEmpty ? "All caught up" : "\(entries.count) to review",
+                subtitle: entries.isEmpty
+                    ? "New activity Hago can't classify will show up here."
+                    : "\(HagoDuration.text(entries.reduce(0) { $0 + $1.group.duration })) unclassified across \(appState.reviewSegments.count) recordings"
+            ) {
                 if !entries.isEmpty {
                     Picker("Sort", selection: $sort) {
                         ForEach(ReviewSort.allCases.filter { $0 != .suggested || !appState.reviewAISuggestions.isEmpty }) { sort in
@@ -316,8 +332,6 @@ private struct ReviewTab: View {
 
             aiStatus
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
     }
 
     @ViewBuilder
@@ -402,25 +416,6 @@ private struct ReviewTab: View {
         }
     }
 
-    @ViewBuilder
-    private var correctionBanner: some View {
-        if let message = appState.correctionMessage {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text(message)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if appState.latestCorrectionActionID != nil {
-                    Button("Undo") { appState.undoLatestCorrection() }
-                        .controlSize(.small)
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
     private func reviewItemsSection(_ entries: [ReviewEntry], selectedID: String?) -> some View {
         Section {
             if entries.isEmpty {
@@ -439,7 +434,7 @@ private struct ReviewTab: View {
                     entry: entry,
                     explanation: appState.classificationExplanation(for: entry.item),
                     recordingSummary: recordingSummary(for: entry.group),
-                    duration: ReviewDuration.text(entry.group.duration, formatter: formatter),
+                    duration: HagoDuration.text(entry.group.duration),
                     rememberOptions: rememberOptions(for: entry.item),
                     showsActions: isSelected || entry.id == hoveredGroupID,
                     classify: { kind in classify(entry, as: kind, in: entries) },
@@ -459,12 +454,7 @@ private struct ReviewTab: View {
                         hoveredGroupID = nil
                     }
                 }
-                .listRowBackground(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(isSelected ? Color.accentColor.opacity(0.13) : Color.clear)
-                        .padding(.horizontal, 8)
-                )
-                .listRowSeparator(.hidden)
+                .hagoRowBackground(isSelected: isSelected, isHovered: entry.id == hoveredGroupID)
             }
         } header: {
             if !entries.isEmpty {
@@ -497,12 +487,6 @@ private struct ReviewTab: View {
         let dateRange = Calendar.current.isDate(group.firstStartedAt, inSameDayAs: group.lastEndedAt)
             ? first : "\(first)–\(last)"
         return "\(group.segmentCount) recordings · \(dateRange)"
-    }
-}
-
-private enum ReviewDuration {
-    static func text(_ duration: TimeInterval, formatter: TimeFormatting) -> String {
-        duration < 60 ? "<1m" : formatter.compactDuration(duration)
     }
 }
 
@@ -617,17 +601,7 @@ private struct ReviewGroupRow: View {
                 .help("Create the suggested rule and file \(suggestion.affectedCount) recording\(suggestion.affectedCount == 1 ? "" : "s") (A)")
             }
 
-            Button("Work") { classify(.work) }
-                .help("Mark these recordings as Work (W)")
-            Button("Personal") { classify(.personal) }
-                .help("Mark these recordings as Personal (P)")
-            Button(role: .destructive) {
-                classify(.ignored)
-            } label: {
-                Image(systemName: "eye.slash")
-                    .accessibilityLabel("Ignore")
-            }
-            .help("Delete these recordings so they never count (I)")
+            ClassifyButtons(currentKind: .review, classify: classify)
 
             if !rememberOptions.isEmpty {
                 Menu {
@@ -664,12 +638,7 @@ private struct SuggestionLine: View {
     let suggestion: ReviewAISuggestion
 
     private var color: Color {
-        switch suggestion.kind {
-        case .work: .blue
-        case .personal: .green
-        case .ignored: .gray
-        case .unsure: .orange
-        }
+        ReviewSuggestionChoice.kind(suggestion)?.tint ?? ActivityKind.review.tint
     }
 
     private var label: String {
@@ -799,265 +768,54 @@ private struct AppliedReviewRulesView: View {
     }
 }
 
+private struct PendingIgnore: Identifiable {
+    let id = UUID()
+    let segmentIDs: [UUID]
+    let title: String
+    let duration: TimeInterval
+}
+
 private struct RecentActivityTab: View {
     @EnvironmentObject private var appState: AppState
     @State private var searchText = ""
-    @State private var kindFilter = ActivityKindFilter.all
+    @State private var kindFilter: ActivityKind?
     @State private var projectFilterID = ActivityProjectFilter.all
     @State private var sort = ActivitySort.newest
     @State private var presentation = ActivityPresentation.grouped
     @State private var ruleInspection: ActivityRuleInspection?
     @State private var timeEditing: ClassifiedSegment?
+    @State private var pendingIgnore: PendingIgnore?
+    @State private var hoveredID: String?
+    @State private var showsCalendar = false
 
-    private let formatter = TimeFormatting()
+    private let calendar = HagoCalendar.shared
 
-    private var displayedSegments: [ClassifiedSegment] {
-        sortedSegments(filteredSegments(appState.activitySegments))
+    private var dayStart: Date {
+        calendar.dayInterval(containing: appState.activityDate).start
     }
 
-    private var displayedGroups: [AggregatedActivity] {
-        sortedGroups(ActivityAggregation.groups(from: filteredSegments(appState.activitySegments)))
+    private var isToday: Bool {
+        dayStart == calendar.dayInterval(containing: Date()).start
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            activityControls
-
-            List {
-                if presentation == .grouped, displayedGroups.isEmpty {
-                    Text(emptyActivityMessage)
-                        .foregroundStyle(.secondary)
-                } else if presentation == .individual, displayedSegments.isEmpty {
-                    Text(emptyActivityMessage)
-                        .foregroundStyle(.secondary)
-                }
-
-                if presentation == .grouped {
-                    ForEach(displayedGroups) { group in
-                        aggregatedActivityRow(group)
-                    }
-                } else {
-                    ForEach(displayedSegments) { item in
-                        individualActivityRow(item)
-                    }
-                }
-            }
-        }
-        .sheet(item: $ruleInspection) { inspection in
-            ActivityRuleInspectorView(inspection: inspection)
-                .environmentObject(appState)
-        }
-        .sheet(item: $timeEditing) { item in
-            ActivityTimeEditor(item: item).environmentObject(appState)
-        }
-        .onAppear {
-            appState.selectActivityDate(HagoCalendar.shared.dayInterval(containing: Date()).start)
-        }
+    private var dayTitle: String {
+        if isToday { return "Today" }
+        let yesterday = calendar.dayInterval(containing: Date()).start.addingTimeInterval(-86_400)
+        if dayStart == calendar.dayInterval(containing: yesterday).start { return "Yesterday" }
+        return dayStart.formatted(.dateTime.weekday(.wide).day().month(.wide))
     }
 
-    private func aggregatedActivityRow(_ group: AggregatedActivity) -> some View {
-        Button {
-            guard let sample = appState.activitySegments.first(where: { group.segmentIDs.contains($0.id) }) else {
-                return
-            }
-
-            ruleInspection = ActivityRuleInspection(
-                id: group.id,
-                title: group.name,
-                detail: "\(group.segmentCount) entries · \(formatter.compactDuration(group.duration))",
-                sample: sample,
-                appliedRuleIDs: group.appliedRuleIDs
-            )
-        } label: {
-            HStack(spacing: 12) {
-                Circle()
-                    .fill(color(for: group.kind))
-                    .frame(width: 10, height: 10)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(group.name)
-                            .font(.headline)
-                        if group.name != group.appName {
-                            Text(group.appName)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let projectName = group.projectName {
-                            Text(projectName)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Text("\(group.segmentCount) entries · \(group.categoryName ?? group.kind.displayName)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Text(formatter.compactDuration(group.duration))
-                    .font(.subheadline.monospacedDigit())
-
-                Image(systemName: "slider.horizontal.3")
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Inspect applied rule")
-            }
-        }
-        .buttonStyle(.plain)
-        .padding(.vertical, 4)
-    }
-
-    private func individualActivityRow(_ item: ClassifiedSegment) -> some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(color(for: item.classification.kind))
-                .frame(width: 10, height: 10)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(item.segment.appName)
-                        .font(.headline)
-                    if let projectName = item.projectName {
-                        Text(projectName)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Text(item.segment.windowTitle.isEmpty ? item.classification.kind.displayName : item.segment.windowTitle)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            Text(formatter.compactDuration(item.segment.duration))
-                .font(.subheadline.monospacedDigit())
-
-            Button {
-                timeEditing = item
-            } label: {
-                Label("Edit Time", systemImage: "clock")
-            }
-            .labelStyle(.iconOnly)
-            .help("Remove unattended time")
-
-            Button {
-                ruleInspection = ActivityRuleInspection(
-                    id: item.id.uuidString,
-                    title: activityName(for: item),
-                    detail: item.segment.startedAt.formatted(.dateTime.hour().minute()),
-                    sample: item,
-                    appliedRuleIDs: item.classification.ruleID.map { [$0] } ?? []
-                )
-            } label: {
-                Label("Inspect Rule", systemImage: "slider.horizontal.3")
-            }
-            .labelStyle(.iconOnly)
-            .help("Inspect applied rule")
-
-            Menu {
-                Button {
-                    appState.updateSegmentClassification(item, as: .work)
-                } label: {
-                    Label("Work", systemImage: symbol(for: .work))
-                }
-
-                Button {
-                    appState.updateSegmentClassification(item, as: .personal)
-                } label: {
-                    Label("Personal", systemImage: symbol(for: .personal))
-                }
-
-                Button(role: .destructive) {
-                    appState.updateSegmentClassification(item, as: .ignored)
-                } label: {
-                    Label("Ignore", systemImage: symbol(for: .ignored))
-                }
-            } label: {
-                Label(categoryName(for: item), systemImage: symbol(for: item.classification.kind))
-                    .lineLimit(1)
-            }
-            .menuStyle(.button)
-        }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .contain)
-    }
-
-    private var emptyActivityMessage: String {
-        appState.activitySegments.isEmpty ? "No activity for this day" : "No matching activity"
-    }
-
-    private var activityControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            WrappingHStack(horizontalSpacing: 12, verticalSpacing: 8) {
-                DatePicker(
-                    "Date",
-                    selection: Binding(
-                        get: { appState.activityDate },
-                        set: { appState.selectActivityDate($0) }
-                    ),
-                    displayedComponents: .date
-                )
-                .datePickerStyle(.compact)
-                .fixedSize()
-
-                TextField("Search activity", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 220)
-
-                Picker("View", selection: $presentation) {
-                    ForEach(ActivityPresentation.allCases) { presentation in
-                        Text(presentation.title).tag(presentation)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 190)
-            }
-
-            WrappingHStack(horizontalSpacing: 12, verticalSpacing: 8) {
-                Picker("Category", selection: $kindFilter) {
-                    ForEach(ActivityKindFilter.allCases) { filter in
-                        Text(filter.title).tag(filter)
-                    }
-                }
-                .frame(width: 170)
-
-                Picker("Project", selection: $projectFilterID) {
-                    Text("All Projects").tag(ActivityProjectFilter.all)
-                    Text("No Project").tag(ActivityProjectFilter.none)
-                    ForEach(appState.projects) { project in
-                        Text(project.name).tag(project.id.uuidString)
-                    }
-                }
-                .frame(width: 190)
-
-                Picker("Sort", selection: $sort) {
-                    ForEach(ActivitySort.allCases) { sort in
-                        Text(sort.title).tag(sort)
-                    }
-                }
-                .frame(width: 180)
-            }
-        }
-    }
-
-    private func filteredSegments(_ segments: [ClassifiedSegment]) -> [ClassifiedSegment] {
+    private var searchedSegments: [ClassifiedSegment] {
         let trimmedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
-        return segments.filter { item in
-            if let kind = kindFilter.kind, item.classification.kind != kind {
-                return false
-            }
-
+        return appState.activitySegments.filter { item in
             if projectFilterID == ActivityProjectFilter.none, item.classification.projectID != nil {
                 return false
             }
 
-            if projectFilterID != ActivityProjectFilter.all, projectFilterID != ActivityProjectFilter.none {
-                guard item.classification.projectID?.uuidString == projectFilterID else {
-                    return false
-                }
+            if projectFilterID != ActivityProjectFilter.all, projectFilterID != ActivityProjectFilter.none,
+               item.classification.projectID?.uuidString != projectFilterID {
+                return false
             }
 
             guard !trimmedSearchText.isEmpty else {
@@ -1077,6 +835,343 @@ private struct RecentActivityTab: View {
         }
     }
 
+    var body: some View {
+        let searched = searchedSegments
+        let displayed = searched.filter { kindFilter == nil || $0.classification.kind == kindFilter }
+        let segmentsByID = Dictionary(appState.activitySegments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let groups = sortedGroups(ActivityAggregation.groups(from: displayed))
+        let segments = sortedSegments(displayed)
+        let longest = groups.map(\.duration).max() ?? 1
+
+        VStack(spacing: 0) {
+            PageTop {
+                PageHeader(title: dayTitle, subtitle: daySubtitle) {
+                    Button {
+                        showsCalendar = true
+                    } label: {
+                        Label("Choose Date", systemImage: "calendar")
+                    }
+                    .labelStyle(.iconOnly)
+                    .help("Choose a date")
+                    .popover(isPresented: $showsCalendar, arrowEdge: .bottom) {
+                        DatePicker(
+                            "Date",
+                            selection: Binding(
+                                get: { appState.activityDate },
+                                set: { date in
+                                    appState.selectActivityDate(date)
+                                    showsCalendar = false
+                                }
+                            ),
+                            in: ...Date(),
+                            displayedComponents: .date
+                        )
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .padding()
+                    }
+
+                    PeriodNavigator(
+                        currentTitle: "Today",
+                        isCurrent: isToday,
+                        canGoForward: !isToday,
+                        step: { offset in
+                            appState.selectActivityDate(dayStart.addingTimeInterval(Double(offset) * 86_400 + 4 * 3_600))
+                        },
+                        reset: { appState.selectActivityDate(Date()) }
+                    )
+                }
+
+                kindChips(searched)
+
+                HStack(spacing: 10) {
+                    SearchField(text: $searchText, prompt: "Search apps, sites, titles")
+
+                    FilterMenu(
+                        activeCount: projectFilterID == ActivityProjectFilter.all ? 0 : 1,
+                        clear: { projectFilterID = ActivityProjectFilter.all }
+                    ) {
+                        Picker("Project", selection: $projectFilterID) {
+                            Text("Any Project").tag(ActivityProjectFilter.all)
+                            Text("No Project").tag(ActivityProjectFilter.none)
+                            ForEach(appState.projects) { project in
+                                Text(project.name).tag(project.id.uuidString)
+                            }
+                        }
+                    }
+
+                    Picker("Sort", selection: $sort) {
+                        ForEach(ActivitySort.allCases) { sort in
+                            Text(sort.title).tag(sort)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+
+                    Picker("View", selection: $presentation) {
+                        ForEach(ActivityPresentation.allCases) { presentation in
+                            Text(presentation.title).tag(presentation)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+
+            List {
+                CorrectionBanner()
+
+                if displayed.isEmpty {
+                    ContentUnavailableView {
+                        Label(
+                            appState.activitySegments.isEmpty ? "No activity" : "No matching activity",
+                            systemImage: "clock"
+                        )
+                    } description: {
+                        Text(appState.activitySegments.isEmpty
+                             ? "Nothing was recorded on this day."
+                             : "Try a different search or clear the filters.")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                }
+
+                if presentation == .grouped {
+                    ForEach(groups) { group in
+                        groupRow(group, sample: group.segmentIDs.lazy.compactMap { segmentsByID[$0] }.first, longest: longest)
+                    }
+                } else {
+                    ForEach(segments) { item in
+                        segmentRow(item)
+                    }
+                }
+            }
+            .listStyle(.inset)
+        }
+        .sheet(item: $ruleInspection) { inspection in
+            ActivityRuleInspectorView(inspection: inspection)
+                .environmentObject(appState)
+        }
+        .sheet(item: $timeEditing) { item in
+            ActivityTimeEditor(item: item).environmentObject(appState)
+        }
+        .confirmationDialog(
+            "Ignore \(pendingIgnore?.title ?? "")?",
+            isPresented: Binding(get: { pendingIgnore != nil }, set: { if !$0 { pendingIgnore = nil } }),
+            presenting: pendingIgnore
+        ) { ignore in
+            Button("Delete \(ignore.segmentIDs.count) Recording\(ignore.segmentIDs.count == 1 ? "" : "s")", role: .destructive) {
+                appState.reclassifyActivity(segmentIDs: ignore.segmentIDs, as: .ignored)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { ignore in
+            Text("\(HagoDuration.text(ignore.duration)) will be removed permanently. To stop recording it in future, add it to Privacy → Never record.")
+        }
+        .onAppear {
+            appState.selectActivityDate(calendar.dayInterval(containing: Date()).start)
+        }
+    }
+
+    private var daySubtitle: String {
+        let total = appState.activitySegments.reduce(0) { $0 + $1.segment.duration }
+        let count = appState.activitySegments.count
+        guard count > 0 else { return dayStart.formatted(date: .complete, time: .omitted) }
+        return "\(HagoDuration.text(total)) tracked · \(count) recording\(count == 1 ? "" : "s")"
+    }
+
+    private func kindChips(_ segments: [ClassifiedSegment]) -> some View {
+        let totals = Dictionary(grouping: segments, by: \.classification.kind)
+            .mapValues { $0.reduce(0) { $0 + $1.segment.duration } }
+        let kinds = [ActivityKind.work, .personal, .review].filter { totals[$0, default: 0] > 0 || kindFilter == $0 }
+
+        return HStack(spacing: 8) {
+            KindFilterChip(
+                title: "All",
+                duration: totals.values.reduce(0, +),
+                tint: .secondary,
+                isSelected: kindFilter == nil,
+                select: { kindFilter = nil }
+            )
+            ForEach(kinds) { kind in
+                KindFilterChip(
+                    title: kind.displayName,
+                    duration: totals[kind, default: 0],
+                    tint: kind.tint,
+                    isSelected: kindFilter == kind,
+                    select: { kindFilter = kindFilter == kind ? nil : kind }
+                )
+            }
+            Spacer()
+        }
+    }
+
+    private func groupRow(_ group: AggregatedActivity, sample: ClassifiedSegment?, longest: TimeInterval) -> some View {
+        let isHovered = hoveredID == group.id
+        return HStack(spacing: 12) {
+            AppIconView(bundleIdentifier: sample?.segment.snapshot.bundleIdentifier ?? "", size: 28)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(group.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                    ActivityKindBadge(kind: group.kind)
+                    if let projectName = group.projectName {
+                        ProjectLabel(name: projectName)
+                    }
+                }
+                Text(groupMeta(group))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Capsule()
+                    .fill(group.kind.tint.opacity(0.55))
+                    .frame(width: max(4, 180 * group.duration / max(longest, 1)), height: 4)
+            }
+
+            Spacer(minLength: 12)
+
+            rowActions(currentKind: group.kind, isVisible: isHovered) { kind in
+                classify(group.segmentIDs, title: group.name, duration: group.duration, as: kind)
+            }
+
+            Text(HagoDuration.text(group.duration))
+                .font(.body.monospacedDigit())
+                .frame(minWidth: 52, alignment: .trailing)
+
+            Image(systemName: "chevron.right")
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard let sample else { return }
+            ruleInspection = ActivityRuleInspection(
+                id: group.id,
+                title: group.name,
+                detail: "\(group.segmentCount) recordings · \(HagoDuration.text(group.duration))",
+                sample: sample,
+                appliedRuleIDs: group.appliedRuleIDs
+            )
+        }
+        .onHover { hovering in updateHover(group.id, hovering) }
+        .hagoRowBackground(isSelected: false, isHovered: isHovered)
+        .help("Click to see why it was classified this way")
+    }
+
+    private func segmentRow(_ item: ClassifiedSegment) -> some View {
+        let id = item.id.uuidString
+        let isHovered = hoveredID == id
+        let segment = item.segment
+        let title = segment.windowTitle.isEmpty ? activityName(for: item) : segment.windowTitle
+        var meta = [segment.appName]
+        if !segment.snapshot.host.isEmpty { meta.append(segment.snapshot.host) }
+
+        return HStack(spacing: 12) {
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(segment.startedAt.formatted(date: .omitted, time: .shortened))
+                    .font(.callout.monospacedDigit())
+                Text(segment.endedAt.formatted(date: .omitted, time: .shortened))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(width: 64, alignment: .trailing)
+
+            AppIconView(bundleIdentifier: segment.snapshot.bundleIdentifier, size: 24)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    ActivityKindBadge(kind: item.classification.kind)
+                    if let projectName = item.projectName {
+                        ProjectLabel(name: projectName)
+                    }
+                }
+                Text(meta.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 12)
+
+            HStack(spacing: 6) {
+                rowActions(currentKind: item.classification.kind, isVisible: true) { kind in
+                    classify([item.id], title: title, duration: segment.duration, as: kind)
+                }
+                Button {
+                    timeEditing = item
+                } label: {
+                    Image(systemName: "scissors")
+                        .accessibilityLabel("Edit Time")
+                }
+                .help("Remove unattended time")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .opacity(isHovered ? 1 : 0)
+            .allowsHitTesting(isHovered)
+
+            Text(HagoDuration.text(segment.duration))
+                .font(.body.monospacedDigit())
+                .frame(minWidth: 52, alignment: .trailing)
+
+            Image(systemName: "chevron.right")
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            ruleInspection = ActivityRuleInspection(
+                id: id,
+                title: title,
+                detail: "\(segment.startedAt.formatted(date: .omitted, time: .shortened))–\(segment.endedAt.formatted(date: .omitted, time: .shortened)) · \(HagoDuration.text(segment.duration))",
+                sample: item,
+                appliedRuleIDs: item.classification.ruleID.map { [$0] } ?? []
+            )
+        }
+        .onHover { hovering in updateHover(id, hovering) }
+        .hagoRowBackground(isSelected: false, isHovered: isHovered)
+        .help("Click to see why it was classified this way")
+    }
+
+    private func rowActions(currentKind: ActivityKind, isVisible: Bool, classify: @escaping (ActivityKind) -> Void) -> some View {
+        ClassifyButtons(currentKind: currentKind, classify: classify)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .opacity(isVisible ? 1 : 0)
+            .allowsHitTesting(isVisible)
+    }
+
+    private func classify(_ ids: [UUID], title: String, duration: TimeInterval, as kind: ActivityKind) {
+        if kind == .ignored {
+            pendingIgnore = PendingIgnore(segmentIDs: ids, title: title, duration: duration)
+        } else {
+            appState.reclassifyActivity(segmentIDs: ids, as: kind)
+        }
+    }
+
+    private func updateHover(_ id: String, _ hovering: Bool) {
+        if hovering {
+            hoveredID = id
+        } else if hoveredID == id {
+            hoveredID = nil
+        }
+    }
+
+    private func groupMeta(_ group: AggregatedActivity) -> String {
+        var parts: [String] = []
+        if group.name != group.appName { parts.append(group.appName) }
+        parts.append("\(group.segmentCount) recording\(group.segmentCount == 1 ? "" : "s")")
+        let first = group.firstStartedAt.formatted(date: .omitted, time: .shortened)
+        let last = group.lastEndedAt.formatted(date: .omitted, time: .shortened)
+        parts.append(first == last ? first : "\(first)–\(last)")
+        return parts.joined(separator: " · ")
+    }
+
     private func sortedSegments(_ segments: [ClassifiedSegment]) -> [ClassifiedSegment] {
         switch sort {
         case .newest:
@@ -1085,15 +1180,9 @@ private struct RecentActivityTab: View {
             segments.sorted { $0.segment.startedAt < $1.segment.startedAt }
         case .longest:
             segments.sorted { $0.segment.duration > $1.segment.duration }
-        case .shortest:
-            segments.sorted { $0.segment.duration < $1.segment.duration }
         case .app:
             segments.sorted {
                 $0.segment.appName.localizedCaseInsensitiveCompare($1.segment.appName) == .orderedAscending
-            }
-        case .category:
-            segments.sorted {
-                categoryName(for: $0).localizedCaseInsensitiveCompare(categoryName(for: $1)) == .orderedAscending
             }
         }
     }
@@ -1106,15 +1195,8 @@ private struct RecentActivityTab: View {
             groups.sorted { $0.firstStartedAt < $1.firstStartedAt }
         case .longest:
             groups.sorted { $0.duration > $1.duration }
-        case .shortest:
-            groups.sorted { $0.duration < $1.duration }
         case .app:
             groups.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        case .category:
-            groups.sorted {
-                ($0.categoryName ?? $0.kind.displayName)
-                    .localizedCaseInsensitiveCompare($1.categoryName ?? $1.kind.displayName) == .orderedAscending
-            }
         }
     }
 
@@ -1133,32 +1215,6 @@ private struct RecentActivityTab: View {
         }
 
         return host
-    }
-
-    private func symbol(for kind: ActivityKind) -> String {
-        switch kind {
-        case .work:
-            "briefcase"
-        case .personal:
-            "person"
-        case .review:
-            "questionmark.circle"
-        case .ignored:
-            "eye.slash"
-        }
-    }
-
-    private func color(for kind: ActivityKind) -> Color {
-        switch kind {
-        case .work:
-            .blue
-        case .personal:
-            .green
-        case .review:
-            .orange
-        case .ignored:
-            .gray
-        }
     }
 }
 
@@ -1207,45 +1263,75 @@ private struct ActivityRuleInspectorView: View {
         )
     }
 
+    private var rememberOptions: [Rule] {
+        [ActivityKind.work, .personal].flatMap { kind in
+            rememberedRuleFactory.rules(
+                from: inspection.sample,
+                kind: kind,
+                categoryID: appState.categories.first(where: { $0.kind == kind })?.id
+            )
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(inspection.title)
-                    .font(.title2.weight(.semibold))
-                Text(inspection.detail)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal)
-            .padding(.top)
-
-            Text(appState.classificationExplanation(for: inspection.sample))
-                .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
-            Menu("Remember a Scope…") {
-                ForEach(rememberedRuleFactory.rules(from: inspection.sample, kind: inspection.sample.classification.kind, categoryID: inspection.sample.classification.categoryID)) { rule in
-                    Button(rule.name) { rememberingRule = rule }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                AppIconView(bundleIdentifier: inspection.sample.segment.snapshot.bundleIdentifier, size: 36)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(inspection.title)
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(inspection.detail)
+                        .foregroundStyle(.secondary)
                 }
-            }.padding(.horizontal)
+                Spacer()
+                ActivityKindBadge(kind: inspection.sample.classification.kind)
+            }
+            .padding([.horizontal, .top], 20)
 
-            if appliedRules.count > 1 {
-                Picker("Applied Rule", selection: $selectedRuleID) {
-                    ForEach(appliedRules) { rule in
-                        Text(rule.name).tag(Optional(rule.id))
+            VStack(alignment: .leading, spacing: 10) {
+                Label(appState.classificationExplanation(for: inspection.sample), systemImage: "info.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    if appliedRules.count > 1 {
+                        Picker("Applied rule", selection: $selectedRuleID) {
+                            ForEach(appliedRules) { rule in
+                                Text(rule.name).tag(Optional(rule.id))
+                            }
+                        }
+                        .fixedSize()
+                    } else if let rule = appliedRules.first {
+                        LabeledContent("Applied rule", value: rule.name)
+                    } else {
+                        Text(suggestedRule == nil
+                             ? "No rule applies to this activity."
+                             : "No rule applies yet. Create one below.")
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if !rememberOptions.isEmpty {
+                        Menu {
+                            ForEach([ActivityKind.work, .personal]) { kind in
+                                let options = rememberOptions.filter { $0.action.kind == kind }
+                                if !options.isEmpty {
+                                    Section("Always \(kind.displayName)") {
+                                        ForEach(options) { rule in
+                                            Button(rule.name) { rememberingRule = rule }
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            Label("Always…", systemImage: "wand.and.stars")
+                        }
+                        .fixedSize()
                     }
                 }
-                .padding(.horizontal)
-            } else if let rule = appliedRules.first {
-                LabeledContent("Applied Rule", value: rule.name)
-                    .padding(.horizontal)
-            } else {
-                Label(
-                    suggestedRule == nil
-                        ? "No rule is applied to this activity."
-                        : "No rule is applied. Create one from this activity.",
-                    systemImage: "info.circle"
-                )
-                .foregroundStyle(.secondary)
-                .padding(.horizontal)
             }
+            .padding(20)
 
             Divider()
 
@@ -1269,48 +1355,13 @@ private struct ActivityRuleInspectorView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text("This browser activity does not contain a URL that can be turned into a safe rule.")
                 )
-                .frame(width: 520, height: 260)
+                .frame(width: 600, height: 260)
             }
         }
+        .frame(width: 600)
+        .frame(maxHeight: 600)
         .sheet(item: $rememberingRule) { rule in
             RememberRulePreviewView(rule: rule).environmentObject(appState)
-        }
-    }
-}
-
-private enum ActivityKindFilter: String, CaseIterable, Identifiable {
-    case all
-    case work
-    case personal
-    case review
-
-    var id: String {
-        rawValue
-    }
-
-    var title: String {
-        switch self {
-        case .all:
-            "All Categories"
-        case .work:
-            "Work"
-        case .personal:
-            "Personal"
-        case .review:
-            "Needs review"
-        }
-    }
-
-    var kind: ActivityKind? {
-        switch self {
-        case .all:
-            nil
-        case .work:
-            .work
-        case .personal:
-            .personal
-        case .review:
-            .review
         }
     }
 }
@@ -1331,9 +1382,9 @@ private enum ActivityPresentation: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .grouped:
-            "Grouped"
+            "By App"
         case .individual:
-            "Individual"
+            "Timeline"
         }
     }
 }
@@ -1342,9 +1393,7 @@ private enum ActivitySort: String, CaseIterable, Identifiable {
     case newest
     case oldest
     case longest
-    case shortest
     case app
-    case category
 
     var id: String {
         rawValue
@@ -1358,12 +1407,8 @@ private enum ActivitySort: String, CaseIterable, Identifiable {
             "Oldest First"
         case .longest:
             "Longest First"
-        case .shortest:
-            "Shortest First"
         case .app:
-            "App A-Z"
-        case .category:
-            "Category A-Z"
+            "Name A–Z"
         }
     }
 }
