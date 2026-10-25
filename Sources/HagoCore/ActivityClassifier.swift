@@ -7,20 +7,26 @@ public struct ActivityClassifier {
         classify(snapshot: snapshot, preparedRules: preparedRules(from: rules))
     }
 
-    public func preparedRules(from rules: [Rule]) -> [Rule] {
-        rules
-            .filter(\.enabled)
-            .filter { !isUnsafeRememberedBrowserAppRule($0) }
-            .sorted { first, second in
-                if first.priority == second.priority {
-                    return first.name.localizedCaseInsensitiveCompare(second.name) == .orderedAscending
-                }
+    public func preparedRules(from rules: [Rule]) -> PreparedRules {
+        PreparedRules(
+            rules
+                .filter(\.enabled)
+                .filter { !isUnsafeRememberedBrowserAppRule($0) }
+                .sorted { first, second in
+                    if first.priority == second.priority {
+                        return first.name.localizedCaseInsensitiveCompare(second.name) == .orderedAscending
+                    }
 
-                return first.priority < second.priority
-            }
+                    return first.priority < second.priority
+                }
+        )
     }
 
-    public func classify(snapshot: ActivitySnapshot, preparedRules: [Rule]) -> ClassificationResult {
+    public func classify(snapshot: ActivitySnapshot, preparedRules: PreparedRules) -> ClassificationResult {
+        classify(snapshot: snapshot, values: SnapshotValues(snapshot), preparedRules: preparedRules)
+    }
+
+    func classify(snapshot: ActivitySnapshot, values: SnapshotValues, preparedRules: PreparedRules) -> ClassificationResult {
         if snapshot.isPrivate {
             return ClassificationResult(kind: .ignored, categoryID: nil, projectID: nil, ruleID: nil)
         }
@@ -29,7 +35,7 @@ public struct ActivityClassifier {
             return ClassificationResult(kind: .ignored, categoryID: nil, projectID: nil, ruleID: nil)
         }
 
-        let matchingRules = preparedRules.filter { matches(rule: $0, snapshot: snapshot) }
+        let matchingRules = preparedRules.matchingRules(for: values)
         if let exclusion = matchingRules.first(where: { $0.action.kind == .ignored }) {
             return result(for: exclusion)
         }
@@ -83,56 +89,7 @@ public struct ActivityClassifier {
     }
 
     public func matches(rule: Rule, snapshot: ActivitySnapshot) -> Bool {
-        guard !rule.conditions.isEmpty else {
-            return false
-        }
-
-        return rule.conditions.allSatisfy { condition in
-            matches(condition: condition, snapshot: snapshot)
-        }
-    }
-
-    private func matches(condition: RuleCondition, snapshot: ActivitySnapshot) -> Bool {
-        let source = value(for: condition.field, snapshot: snapshot)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let target = condition.value.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !target.isEmpty else {
-            return false
-        }
-
-        switch condition.operation {
-        case .contains:
-            return source.localizedCaseInsensitiveContains(target)
-        case .equals:
-            return source.caseInsensitiveCompare(target) == .orderedSame
-        case .domain:
-            let normalizedSource = source.lowercased()
-            let normalizedTarget = target.lowercased()
-            return normalizedSource == normalizedTarget
-                || normalizedSource.hasSuffix(".\(normalizedTarget)")
-        case .startsWith:
-            return source.lowercased().hasPrefix(target.lowercased())
-        case .endsWith:
-            return source.lowercased().hasSuffix(target.lowercased())
-        case .regex:
-            return source.range(of: target, options: [.regularExpression, .caseInsensitive]) != nil
-        }
-    }
-
-    private func value(for field: RuleField, snapshot: ActivitySnapshot) -> String {
-        switch field {
-        case .appName:
-            snapshot.appName
-        case .bundleIdentifier:
-            snapshot.bundleIdentifier
-        case .windowTitle:
-            snapshot.windowTitle
-        case .url:
-            snapshot.url ?? ""
-        case .host:
-            snapshot.host
-        }
+        PreparedCondition.matches(rule.conditions.map(PreparedCondition.init), values: SnapshotValues(snapshot))
     }
 
     private func isUnsafeRememberedBrowserAppRule(_ rule: Rule) -> Bool {
@@ -158,5 +115,190 @@ public struct ActivityClassifier {
 
         return app == "loginwindow" || bundle == "com.apple.loginwindow"
             || app == "securityagent" || bundle == "com.apple.securityagent"
+    }
+}
+
+/// Rules sorted by precedence, bucketed by an exact host, bundle, app or URL value so
+/// classification only evaluates rules that can match instead of every rule.
+public struct PreparedRules: Sendable {
+    public let rules: [Rule]
+    private let conditions: [[PreparedCondition]]
+    private let exactIndex: [RuleField: [String: [Int]]]
+    private let domainIndex: [String: [Int]]
+    private let unindexed: [Int]
+
+    public init(_ sortedRules: [Rule]) {
+        rules = sortedRules
+        conditions = sortedRules.map { $0.conditions.map(PreparedCondition.init) }
+        var exactIndex: [RuleField: [String: [Int]]] = [:]
+        var domainIndex: [String: [Int]] = [:]
+        var unindexed: [Int] = []
+
+        for (index, conditions) in conditions.enumerated() {
+            if let condition = conditions.first(where: \.isExactKey) {
+                exactIndex[condition.field, default: [:]][condition.lowercasedTarget, default: []].append(index)
+            } else if let condition = conditions.first(where: \.isDomainKey) {
+                domainIndex[condition.lowercasedTarget, default: []].append(index)
+            } else {
+                unindexed.append(index)
+            }
+        }
+
+        self.exactIndex = exactIndex
+        self.domainIndex = domainIndex
+        self.unindexed = unindexed
+    }
+
+    func matchingRules(for values: SnapshotValues) -> [Rule] {
+        candidateIndices(for: values)
+            .filter { PreparedCondition.matches(conditions[$0], values: values) }
+            .map { rules[$0] }
+    }
+
+    func candidateIndices(for values: SnapshotValues) -> [Int] {
+        let indexedFields: [RuleField] = [.host, .bundleIdentifier, .appName, .url]
+
+        // Case-insensitive comparison of non-ASCII text can differ from lowercased keys.
+        guard indexedFields.allSatisfy({ values[$0].isASCII }) else {
+            return Array(rules.indices)
+        }
+
+        var indices = unindexed
+        for field in indexedFields {
+            if let hits = exactIndex[field]?[values[field].lowercased] {
+                indices.append(contentsOf: hits)
+            }
+        }
+
+        var suffix = Substring(values[.host].lowercased)
+        while !suffix.isEmpty {
+            if let hits = domainIndex[String(suffix)] {
+                indices.append(contentsOf: hits)
+            }
+            guard let dot = suffix.firstIndex(of: ".") else { break }
+            suffix = suffix[suffix.index(after: dot)...]
+        }
+
+        return indices.sorted()
+    }
+}
+
+struct PreparedCondition: Sendable {
+    let field: RuleField
+    let operation: RuleOperation
+    let target: String
+    let lowercasedTarget: String
+    let isASCII: Bool
+
+    init(_ condition: RuleCondition) {
+        field = condition.field
+        operation = condition.operation
+        target = condition.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        lowercasedTarget = target.lowercased()
+        isASCII = target.utf8.allSatisfy { $0 < 0x80 }
+    }
+
+    var isExactKey: Bool {
+        operation == .equals && field != .windowTitle && isASCII && !target.isEmpty
+    }
+
+    var isDomainKey: Bool {
+        operation == .domain && field == .host && isASCII && !target.isEmpty
+            && !target.hasPrefix(".") && !target.hasSuffix(".")
+    }
+
+    static func matches(_ conditions: [PreparedCondition], values: SnapshotValues) -> Bool {
+        !conditions.isEmpty && conditions.allSatisfy { $0.matches(values[$0.field]) }
+    }
+
+    func matches(_ source: FieldValue) -> Bool {
+        guard !target.isEmpty else {
+            return false
+        }
+
+        let asciiOnly = isASCII && source.isASCII
+        switch operation {
+        case .contains:
+            // ASCII lowercasing is a cheap superset check; the localized comparison stays authoritative.
+            if asciiOnly, !asciiContains(source.lowercased, lowercasedTarget) {
+                return false
+            }
+            return source.text.localizedCaseInsensitiveContains(target)
+        case .equals:
+            if asciiOnly {
+                return source.lowercased == lowercasedTarget
+            }
+            return source.text.caseInsensitiveCompare(target) == .orderedSame
+        case .domain:
+            return source.lowercased == lowercasedTarget
+                || source.lowercased.hasSuffix(".\(lowercasedTarget)")
+        case .startsWith:
+            return source.lowercased.hasPrefix(lowercasedTarget)
+        case .endsWith:
+            return source.lowercased.hasSuffix(lowercasedTarget)
+        case .regex:
+            return source.text.range(of: target, options: [.regularExpression, .caseInsensitive]) != nil
+        }
+    }
+}
+
+private func asciiContains(_ haystack: String, _ needle: String) -> Bool {
+    var haystack = haystack
+    var needle = needle
+    return haystack.withUTF8 { source in
+        needle.withUTF8 { target in
+            guard target.count <= source.count, let first = target.first else { return target.isEmpty }
+            var index = 0
+            let last = source.count - target.count
+            while index <= last {
+                if source[index] == first {
+                    var offset = 1
+                    while offset < target.count, source[index + offset] == target[offset] {
+                        offset += 1
+                    }
+                    if offset == target.count { return true }
+                }
+                index += 1
+            }
+            return false
+        }
+    }
+}
+
+struct FieldValue {
+    let text: String
+    let lowercased: String
+    let isASCII: Bool
+
+    init(_ value: String) {
+        text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        lowercased = text.lowercased()
+        isASCII = text.utf8.allSatisfy { $0 < 0x80 }
+    }
+}
+
+struct SnapshotValues {
+    private let host: FieldValue
+    private let bundleIdentifier: FieldValue
+    private let appName: FieldValue
+    private let url: FieldValue
+    private let windowTitle: FieldValue
+
+    init(_ snapshot: ActivitySnapshot) {
+        host = FieldValue(snapshot.host)
+        bundleIdentifier = FieldValue(snapshot.bundleIdentifier)
+        appName = FieldValue(snapshot.appName)
+        url = FieldValue(snapshot.url ?? "")
+        windowTitle = FieldValue(snapshot.windowTitle)
+    }
+
+    subscript(field: RuleField) -> FieldValue {
+        switch field {
+        case .appName: appName
+        case .bundleIdentifier: bundleIdentifier
+        case .windowTitle: windowTitle
+        case .url: url
+        case .host: host
+        }
     }
 }

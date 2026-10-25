@@ -53,6 +53,7 @@ private enum SQLiteValue {
 private struct ReclassificationCandidate {
     var segment: ActivitySegment
     var classification: SegmentClassification
+    var reason: String?
 }
 
 private struct SQLPredicate {
@@ -85,6 +86,10 @@ private struct ReviewAIAuditDecision {
 public final class HagoStore {
     private var database: OpaquePointer?
     private let classifier = ActivityClassifier()
+    private var statements: [String: OpaquePointer] = [:]
+    private var cachedRules: [Rule]?
+    private var cachedPreparedRules: PreparedRules?
+    private var transactionDepth = 0
 
     public init(databaseURL: URL) throws {
         var connection: OpaquePointer?
@@ -98,6 +103,8 @@ public final class HagoStore {
         do {
             try execute("PRAGMA foreign_keys = ON")
             try migrateVersioned(databaseURL: databaseURL)
+            try ensurePerformanceIndexes()
+            rulesDidChange()
         } catch {
             sqlite3_close(connection)
             database = nil
@@ -106,6 +113,9 @@ public final class HagoStore {
     }
 
     deinit {
+        for statement in statements.values {
+            sqlite3_finalize(statement)
+        }
         if let database {
             sqlite3_close(database)
         }
@@ -230,14 +240,38 @@ public final class HagoStore {
             ]
         )
 
-        try saveClassification(classification)
-        if !classification.isManual {
-            let result = classifier.classify(snapshot: segment.snapshot, rules: try loadRules())
-            try saveReason(result.reason, segmentID: segment.id)
-        }
+        let reason = classification.isManual
+            ? nil
+            : classifier.classify(snapshot: segment.snapshot, preparedRules: try preparedRules()).reason
+        try saveClassification(classification, reason: reason)
     }
 
     public func loadRules() throws -> [Rule] {
+        if let cachedRules {
+            return cachedRules
+        }
+
+        let conditions = Dictionary(
+            grouping: try query(
+                """
+                SELECT rule_id, id, field, operation, value
+                FROM rule_conditions
+                ORDER BY rowid ASC
+                """
+            ) { statement in
+                (
+                    uuidColumn(statement, 0),
+                    RuleCondition(
+                        id: uuidColumn(statement, 1),
+                        field: RuleField(rawValue: stringColumn(statement, 2)) ?? .windowTitle,
+                        operation: RuleOperation(rawValue: stringColumn(statement, 3)) ?? .contains,
+                        value: stringColumn(statement, 4)
+                    )
+                )
+            },
+            by: \.0
+        )
+
         let rules = try query(
             """
             SELECT id, name, priority, enabled, is_built_in, action_kind, category_id, project_id, origin, preset_id, parent_rule_id
@@ -245,8 +279,9 @@ public final class HagoStore {
             ORDER BY priority ASC, name ASC
             """
         ) { statement in
-            Rule(
-                id: uuidColumn(statement, 0),
+            let id = uuidColumn(statement, 0)
+            return Rule(
+                id: id,
                 name: stringColumn(statement, 1),
                 priority: intColumn(statement, 2),
                 enabled: boolColumn(statement, 3),
@@ -256,20 +291,29 @@ public final class HagoStore {
                     categoryID: optionalUUIDColumn(statement, 6),
                     projectID: optionalUUIDColumn(statement, 7)
                 ),
-                conditions: [],
+                conditions: conditions[id]?.map(\.1) ?? [],
                 origin: ClassificationRuleOrigin(rawValue: stringColumn(statement, 8)),
                 presetID: optionalStringColumn(statement, 9),
                 parentRuleID: optionalUUIDColumn(statement, 10)
             )
         }
 
-        var populatedRules: [Rule] = []
-        for var rule in rules {
-            rule.conditions = try loadConditions(ruleID: rule.id)
-            populatedRules.append(rule)
-        }
+        cachedRules = rules
+        return rules
+    }
 
-        return populatedRules
+    private func preparedRules() throws -> PreparedRules {
+        if let cachedPreparedRules {
+            return cachedPreparedRules
+        }
+        let prepared = classifier.preparedRules(from: try loadRules())
+        cachedPreparedRules = prepared
+        return prepared
+    }
+
+    private func rulesDidChange() {
+        cachedRules = nil
+        cachedPreparedRules = nil
     }
 
     public func ruleReviewRecords() throws -> [RuleReviewRecord] {
@@ -353,6 +397,7 @@ public final class HagoStore {
     }
 
     private func saveRuleWithinTransaction(_ rule: Rule) throws {
+        rulesDidChange()
         try execute(
             """
             INSERT INTO rules (
@@ -459,6 +504,7 @@ public final class HagoStore {
         if let rule = try loadRules().first(where: { $0.id == id }), rule.presetID != nil {
             try execute("INSERT OR IGNORE INTO preset_tombstones(rule_id) VALUES (?)", bindings: [.text(id.uuidString)])
         }
+        rulesDidChange()
         try execute("DELETE FROM rule_conditions WHERE rule_id = ?", bindings: [.text(id.uuidString)])
         try execute("DELETE FROM rules WHERE id = ?", bindings: [.text(id.uuidString)])
     }
@@ -500,6 +546,7 @@ public final class HagoStore {
     }
 
     public func deleteCategory(id: UUID) throws {
+        rulesDidChange()
         try execute("DELETE FROM categories WHERE id = ?", bindings: [.text(id.uuidString)])
     }
 
@@ -540,6 +587,7 @@ public final class HagoStore {
     }
 
     public func deleteProject(id: UUID) throws {
+        rulesDidChange()
         try execute("UPDATE rules SET project_id = NULL WHERE project_id = ?", bindings: [.text(id.uuidString)])
         try execute("DELETE FROM projects WHERE id = ?", bindings: [.text(id.uuidString)])
     }
@@ -580,46 +628,67 @@ public final class HagoStore {
         }
     }
 
-    public func reclassify(scope: ReclassificationScope, preserveProjects: Bool = true) throws {
-        let startDate: Date?
-        switch scope {
-        case .today:
-            startDate = dayInterval(for: Date()).start
-        case .allHistory:
-            startDate = nil
-        }
-
+    public func saveRule(_ rule: Rule, reclassify scope: ReclassificationScope?) throws {
         try transaction {
-            let rules = classifier.preparedRules(from: try loadRules())
-            let candidates = try reclassificationCandidates(startDate: startDate)
+            let previous = try loadRules().first { $0.id == rule.id }
+            try saveRule(rule)
+            if let scope {
+                try reclassify(affectedBy: [previous, rule].compactMap { $0 }, scope: scope)
+            }
+        }
+    }
 
-            for candidate in candidates {
+    public func deleteRule(id: UUID, reclassify scope: ReclassificationScope?) throws {
+        try transaction {
+            let previous = try loadRules().first { $0.id == id }
+            try deleteRule(id: id)
+            if let scope, let previous {
+                try reclassify(affectedBy: [previous], scope: scope)
+            }
+        }
+    }
+
+    public func reclassify(scope: ReclassificationScope, preserveProjects: Bool = true) throws {
+        try transaction {
+            let rules = try preparedRules()
+            for candidate in try reclassificationCandidates(startDate: startDate(for: scope), predicate: nil) {
                 let result = classifier.classify(snapshot: candidate.segment.snapshot, preparedRules: rules)
                 try applyReclassificationResult(result, to: candidate, preserveProject: preserveProjects)
             }
         }
     }
 
-    public func reclassify(ruleID: UUID, scope: ReclassificationScope, preserveProjects: Bool = true) throws {
-        let startDate: Date?
+    /// A rule only changes the outcome for activity it matches, so re-evaluating
+    /// the old and new versions' matches is equivalent to reclassifying everything.
+    public func reclassify(affectedBy affectingRules: [Rule], scope: ReclassificationScope, preserveProjects: Bool = true) throws {
+        try transaction {
+            let rules = try preparedRules()
+            let startDate = startDate(for: scope)
+            var visited = Set<UUID>()
+            for affectingRule in affectingRules {
+                let conditions = affectingRule.conditions.map(PreparedCondition.init)
+                for candidate in try reclassificationCandidates(matching: affectingRule, startDate: startDate)
+                    where visited.insert(candidate.segment.id).inserted {
+                    let values = SnapshotValues(candidate.segment.snapshot)
+                    guard PreparedCondition.matches(conditions, values: values) else { continue }
+                    let result = classifier.classify(snapshot: candidate.segment.snapshot, values: values, preparedRules: rules)
+                    try applyReclassificationResult(result, to: candidate, preserveProject: preserveProjects)
+                }
+            }
+        }
+    }
+
+    public func reclassify(ruleID: UUID, scope: ReclassificationScope) throws {
+        guard let rule = try loadRules().first(where: { $0.id == ruleID }) else { return }
+        try reclassify(affectedBy: [rule], scope: scope)
+    }
+
+    private func startDate(for scope: ReclassificationScope) -> Date? {
         switch scope {
         case .today:
-            startDate = dayInterval(for: Date()).start
+            dayInterval(for: Date()).start
         case .allHistory:
-            startDate = nil
-        }
-
-        try transaction {
-            let rules = classifier.preparedRules(from: try loadRules())
-            guard let rule = rules.first(where: { $0.id == ruleID }) else {
-                return
-            }
-
-            let candidates = try reclassificationCandidates(matching: rule, startDate: startDate)
-            for candidate in candidates where classifier.matches(rule: rule, snapshot: candidate.segment.snapshot) {
-                let result = classifier.classify(snapshot: candidate.segment.snapshot, preparedRules: rules)
-                try applyReclassificationResult(result, to: candidate, preserveProject: preserveProjects)
-            }
+            nil
         }
     }
 
@@ -675,7 +744,7 @@ public final class HagoStore {
                 let result = classifier.classify(snapshot: entry.segment.snapshot, preparedRules: preparedRules)
                 guard result.ruleID != nil, result.kind == .work || result.kind == .personal else { continue }
                 try applyReclassificationResult(
-                    result, to: ReclassificationCandidate(segment: entry.segment, classification: entry.classification),
+                    result, to: ReclassificationCandidate(segment: entry.segment, classification: entry.classification, reason: nil),
                     preserveProject: true
                 )
                 count += 1
@@ -896,6 +965,7 @@ public final class HagoStore {
         var revertedRuleCount = 0
         var unchangedRuleCount = 0
         var conflictCount = 0
+        var revertedRules: [Rule] = []
 
         for decision in decisions {
             guard let ruleID = decision.ruleID,
@@ -926,10 +996,11 @@ public final class HagoStore {
             case .reused:
                 break
             }
+            revertedRules.append(rule)
             revertedRuleCount += 1
         }
 
-        try reclassify(scope: .allHistory, preserveProjects: true)
+        try reclassify(affectedBy: revertedRules, scope: .allHistory)
         let status: ReviewAIRunStatus = conflictCount == 0 ? .undone : .partiallyUndone
         try execute(
             "UPDATE review_ai_runs SET status = ? WHERE id = ?",
@@ -1016,7 +1087,9 @@ public final class HagoStore {
         _ plan: ReviewAISuggestionApplyPlan
     ) throws -> ReviewAISuggestionApplyResult? {
         let ruleID = try saveRememberedRule(plan.rule)
-        try reclassify(ruleID: ruleID, scope: .allHistory, preserveProjects: true)
+        if let rule = try loadRules().first(where: { $0.id == ruleID }) {
+            try reclassify(affectedBy: [rule], scope: .allHistory)
+        }
 
         guard try !hasCurrentReviewMatch(for: plan.condition) else {
             try rollbackReviewAIRuleChange(plan.ruleChange, ruleID: ruleID)
@@ -1035,18 +1108,17 @@ public final class HagoStore {
         _ change: ReviewAIRuleChange,
         ruleID: UUID
     ) throws {
+        guard var rule = try loadRules().first(where: { $0.id == ruleID }) else { return }
         switch change {
         case .created:
             try deleteRule(id: ruleID)
         case .reenabled:
-            if var rule = try loadRules().first(where: { $0.id == ruleID }) {
-                rule.enabled = false
-                try saveRule(rule)
-            }
+            rule.enabled = false
+            try saveRule(rule)
         case .reused:
-            break
+            return
         }
-        try reclassify(scope: .allHistory)
+        try reclassify(affectedBy: [rule], scope: .allHistory)
     }
 
     @discardableResult
@@ -1602,26 +1674,7 @@ public final class HagoStore {
         }
     }
 
-    private func loadConditions(ruleID: UUID) throws -> [RuleCondition] {
-        try query(
-            """
-            SELECT id, field, operation, value
-            FROM rule_conditions
-            WHERE rule_id = ?
-            ORDER BY rowid ASC
-            """,
-            bindings: [.text(ruleID.uuidString)]
-        ) { statement in
-            RuleCondition(
-                id: uuidColumn(statement, 0),
-                field: RuleField(rawValue: stringColumn(statement, 1)) ?? .windowTitle,
-                operation: RuleOperation(rawValue: stringColumn(statement, 2)) ?? .contains,
-                value: stringColumn(statement, 3)
-            )
-        }
-    }
-
-    private func saveClassification(_ classification: SegmentClassification) throws {
+    private func saveClassification(_ classification: SegmentClassification, reason explicitReason: String? = nil) throws {
         try execute(
             """
             INSERT OR REPLACE INTO classifications (
@@ -1644,7 +1697,8 @@ public final class HagoStore {
             ]
         )
         let reason: String
-        if classification.isManual { reason = "Your explicit correction" }
+        if let explicitReason { reason = explicitReason }
+        else if classification.isManual { reason = "Your explicit correction" }
         else if let ruleID = classification.ruleID, let rule = try loadRules().first(where: { $0.id == ruleID }) {
             reason = "\(rule.isWorkDefault ? "Work default" : rule.origin == .preset ? "Preset" : rule.origin == .user ? "Personal rule" : rule.origin == .ai ? "AI rule" : "Legacy rule"): \(rule.name)"
         } else { reason = "No matching rule; needs your input" }
@@ -1706,13 +1760,14 @@ public final class HagoStore {
             isManual: false
         )
 
-        guard classification != candidate.classification else {
-            try saveReason(result.reason, segmentID: candidate.segment.id)
+        if classification == candidate.classification {
+            if candidate.reason != result.reason {
+                try saveReason(result.reason, segmentID: candidate.segment.id)
+            }
             return
         }
 
-        try saveClassification(classification)
-        try saveReason(result.reason, segmentID: candidate.segment.id)
+        try saveClassification(classification, reason: result.reason)
     }
 
     private func reclassificationCandidates(startDate: Date?) throws -> [ReclassificationCandidate] {
@@ -1720,7 +1775,7 @@ public final class HagoStore {
     }
 
     private func reclassificationCandidates(matching rule: Rule, startDate: Date?) throws -> [ReclassificationCandidate] {
-        try reclassificationCandidates(startDate: startDate, predicate: reclassificationPredicate(for: rule))
+        try reclassificationCandidates(startDate: startDate, predicate: try reclassificationPredicate(for: rule))
     }
 
     private func hasCurrentReviewMatch(for condition: RuleCondition) throws -> Bool {
@@ -1733,7 +1788,7 @@ public final class HagoStore {
             conditions: [condition]
         )
 
-        guard let predicate = reclassificationPredicate(for: rule) else {
+        guard let predicate = try reclassificationPredicate(for: rule) else {
             return false
         }
 
@@ -1760,7 +1815,8 @@ public final class HagoStore {
         startDate: Date?,
         predicate: SQLPredicate?
     ) throws -> [ReclassificationCandidate] {
-        var clauses = ["c.is_manual = 0"]
+        // The unary plus keeps SQLite off the low-selectivity is_manual index.
+        var clauses = ["+c.is_manual = 0"]
         var bindings: [SQLiteValue] = []
 
         if let startDate {
@@ -1793,9 +1849,11 @@ public final class HagoStore {
                 c.category_id,
                 c.project_id,
                 c.rule_id,
-                c.is_manual
+                c.is_manual,
+                r.reason
             FROM activity_segments AS s \(indexHint)
             JOIN classifications c ON c.segment_id = s.id
+            LEFT JOIN classification_reasons r ON r.segment_id = s.id
             WHERE \(whereClause)
             ORDER BY s.started_at ASC
             """,
@@ -1805,11 +1863,20 @@ public final class HagoStore {
         }
     }
 
-    private func reclassificationPredicate(for rule: Rule) -> SQLPredicate? {
-        guard rule.conditions.count == 1, let condition = rule.conditions.first else {
+    private func reclassificationPredicate(for rule: Rule) throws -> SQLPredicate? {
+        let predicates = try rule.conditions.compactMap(reclassificationPredicate(for:))
+        guard !predicates.isEmpty else {
             return nil
         }
 
+        return SQLPredicate(
+            sql: predicates.map { "(\($0.sql))" }.joined(separator: " AND "),
+            bindings: predicates.flatMap(\.bindings),
+            indexName: predicates.lazy.compactMap(\.indexName).first
+        )
+    }
+
+    private func reclassificationPredicate(for condition: RuleCondition) throws -> SQLPredicate? {
         let value = normalizedSearchValue(condition.value)
         guard !value.isEmpty else {
             return nil
@@ -1844,6 +1911,19 @@ public final class HagoStore {
             )
         case .equals:
             return SQLPredicate(sql: "\(expression) = ?", bindings: [.text(value)], indexName: indexName)
+        case .domain where condition.field == .host:
+            let hosts = try query(
+                "SELECT DISTINCT host FROM activity_segments WHERE host = ? OR host LIKE ? ESCAPE '\\'",
+                bindings: [.text(value), .text("%.\(escapedLikeValue(value))")]
+            ) { stringColumn($0, 0) }
+            guard !hosts.isEmpty else {
+                return SQLPredicate(sql: "0", bindings: [], indexName: nil)
+            }
+            return SQLPredicate(
+                sql: "s.host IN (\(Array(repeating: "?", count: hosts.count).joined(separator: ", ")))",
+                bindings: hosts.map { .text($0) },
+                indexName: indexName
+            )
         case .domain:
             return SQLPredicate(
                 sql: "(\(expression) = ? OR \(expression) LIKE ? ESCAPE '\\')",
@@ -2125,12 +2205,15 @@ public final class HagoStore {
     }
 
     private func transaction(_ work: () throws -> Void) throws {
-        let savepoint = "hago_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let savepoint = "hago_\(transactionDepth)"
+        transactionDepth += 1
+        defer { transactionDepth -= 1 }
         try execute("SAVEPOINT \(savepoint)")
         do {
             try work()
             try execute("RELEASE SAVEPOINT \(savepoint)")
         } catch {
+            rulesDidChange()
             try? execute("ROLLBACK TO SAVEPOINT \(savepoint)")
             try? execute("RELEASE SAVEPOINT \(savepoint)")
             throw error
@@ -2138,23 +2221,10 @@ public final class HagoStore {
     }
 
     private func execute(_ sql: String, bindings: [SQLiteValue] = []) throws {
-        guard let database else {
-            throw HagoStoreError.missingDatabase
-        }
-
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw HagoStoreError.failedToPrepare(String(cString: sqlite3_errmsg(database)))
-        }
-
-        defer {
-            sqlite3_finalize(statement)
-        }
-
-        try bind(bindings, to: statement)
-
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw HagoStoreError.failedToStep(String(cString: sqlite3_errmsg(database)))
+        try withStatement(sql, bindings: bindings) { statement in
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw HagoStoreError.failedToStep(String(cString: sqlite3_errmsg(database)))
+            }
         }
     }
 
@@ -2163,31 +2233,49 @@ public final class HagoStore {
         bindings: [SQLiteValue] = [],
         map: (OpaquePointer?) throws -> T
     ) throws -> [T] {
+        try withStatement(sql, bindings: bindings) { statement in
+            var rows: [T] = []
+            var result = sqlite3_step(statement)
+            while result == SQLITE_ROW {
+                rows.append(try map(statement))
+                result = sqlite3_step(statement)
+            }
+            guard result == SQLITE_DONE else {
+                throw HagoStoreError.failedToStep(String(cString: sqlite3_errmsg(database)))
+            }
+            return rows
+        }
+    }
+
+    private func withStatement<T>(
+        _ sql: String,
+        bindings: [SQLiteValue],
+        _ work: (OpaquePointer?) throws -> T
+    ) throws -> T {
         guard let database else {
             throw HagoStoreError.missingDatabase
         }
 
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw HagoStoreError.failedToPrepare(String(cString: sqlite3_errmsg(database)))
+        let cached = statements[sql].flatMap { sqlite3_stmt_busy($0) == 0 ? $0 : nil }
+        var statement = cached
+        if statement == nil {
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw HagoStoreError.failedToPrepare(String(cString: sqlite3_errmsg(database)))
+            }
         }
 
         defer {
-            sqlite3_finalize(statement)
+            if cached != nil || (statements[sql] == nil && statements.count < 256), let statement {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+                statements[sql] = statement
+            } else {
+                sqlite3_finalize(statement)
+            }
         }
 
         try bind(bindings, to: statement)
-
-        var rows: [T] = []
-        var result = sqlite3_step(statement)
-        while result == SQLITE_ROW {
-            rows.append(try map(statement))
-            result = sqlite3_step(statement)
-        }
-        guard result == SQLITE_DONE else {
-            throw HagoStoreError.failedToStep(String(cString: sqlite3_errmsg(database)))
-        }
-        return rows
+        return try work(statement)
     }
 
     private func bind(_ bindings: [SQLiteValue], to statement: OpaquePointer?) throws {
@@ -2340,7 +2428,8 @@ private func reclassificationCandidateColumn(_ statement: OpaquePointer?) -> Rec
             projectID: optionalUUIDColumn(statement, 12),
             ruleID: optionalUUIDColumn(statement, 13),
             isManual: boolColumn(statement, 14)
-        )
+        ),
+        reason: optionalStringColumn(statement, 15)
     )
 }
 
@@ -2419,6 +2508,13 @@ extension HagoStore {
         }
     }
 
+    private func ensurePerformanceIndexes() throws {
+        try execute("CREATE INDEX IF NOT EXISTS rule_conditions_rule_id_idx ON rule_conditions(rule_id)")
+        try execute("CREATE INDEX IF NOT EXISTS classifications_rule_id_idx ON classifications(rule_id)")
+        try execute("CREATE INDEX IF NOT EXISTS classifications_project_id_idx ON classifications(project_id)")
+        try execute("CREATE INDEX IF NOT EXISTS correction_changes_segment_id_idx ON correction_changes(segment_id)")
+    }
+
     public func backup(to destination: URL) throws {
         guard !FileManager.default.fileExists(atPath: destination.path) else {
             throw HagoStoreError.failedToOpenDatabase("Backup destination already exists")
@@ -2481,11 +2577,13 @@ extension HagoStore {
     }
 
     public func previewRememberedRule(_ rule: Rule) throws -> RuleImpactPreview {
-        let candidates = try reclassificationCandidates(matching: rule, startDate: nil)
-            .filter { $0.classification.projectID == nil && classifier.matches(rule: rule, snapshot: $0.segment.snapshot) }
+        let conditions = rule.conditions.map(PreparedCondition.init)
         let rules = classifier.preparedRules(from: try loadRules().filter { $0.id != rule.id } + [rule])
-        let affected = candidates.filter { candidate in
-            let result = classifier.classify(snapshot: candidate.segment.snapshot, preparedRules: rules)
+        let affected = try reclassificationCandidates(matching: rule, startDate: nil).filter { candidate in
+            guard candidate.classification.projectID == nil else { return false }
+            let values = SnapshotValues(candidate.segment.snapshot)
+            guard PreparedCondition.matches(conditions, values: values) else { return false }
+            let result = classifier.classify(snapshot: candidate.segment.snapshot, values: values, preparedRules: rules)
             return result.kind != candidate.classification.kind || result.ruleID != candidate.classification.ruleID
         }
         return RuleImpactPreview(affectedCount: affected.count, affectedSeconds: affected.reduce(0) { $0 + $1.segment.duration },
@@ -2504,16 +2602,17 @@ extension HagoStore {
             try execute("INSERT INTO correction_actions(id, created_at, rule_id, rule_fingerprint) VALUES (?, ?, ?, ?)",
                         bindings: [.text(actionID.uuidString), .double(Date().timeIntervalSince1970), .text(rule.id.uuidString), .text(try ruleFingerprint(rule))])
             try saveRule(rule)
-            let rules = classifier.preparedRules(from: try loadRules())
-            for candidate in try reclassificationCandidates(matching: rule, startDate: nil)
-                where candidate.classification.projectID == nil && classifier.matches(rule: rule, snapshot: candidate.segment.snapshot) {
-                let result = classifier.classify(snapshot: candidate.segment.snapshot, preparedRules: rules)
+            let rules = try preparedRules()
+            let conditions = rule.conditions.map(PreparedCondition.init)
+            for candidate in try reclassificationCandidates(matching: rule, startDate: nil) where candidate.classification.projectID == nil {
+                let values = SnapshotValues(candidate.segment.snapshot)
+                guard PreparedCondition.matches(conditions, values: values) else { continue }
+                let result = classifier.classify(snapshot: candidate.segment.snapshot, values: values, preparedRules: rules)
                 guard result.kind != .ignored else { continue }
                 let after = SegmentClassification(segmentID: candidate.segment.id, kind: result.kind, categoryID: result.categoryID,
                                                   projectID: nil, ruleID: result.ruleID, isManual: false)
-                try recordCorrection(actionID: actionID, before: candidate.classification, after: after)
-                try saveClassification(after)
-                try saveReason(result.reason, segmentID: candidate.segment.id)
+                try recordCorrection(actionID: actionID, before: candidate.classification, beforeReason: candidate.reason, after: after)
+                try saveClassification(after, reason: result.reason)
             }
             try pruneCorrectionActions()
         }
@@ -2554,25 +2653,29 @@ extension HagoStore {
                 guard let current = try loadRules().first(where: { $0.id == ruleID }), try ruleFingerprint(current) == payload else {
                     throw HagoStoreError.failedToStep("This rule changed after learning. Remove it manually to preserve later choices.")
                 }
+                rulesDidChange()
                 try execute("DELETE FROM rules WHERE id=?", bindings: [.text(ruleID.uuidString)])
             }
             let changes = try query("SELECT segment_id, before_payload, after_payload, before_reason FROM correction_changes WHERE action_id=?", bindings: [.text(id.uuidString)]) {
                 (uuidColumn($0, 0), stringColumn($0, 1), stringColumn($0, 2), stringColumn($0, 3))
             }
+            let ruleIDs = Set(try loadRules().map(\.id))
+            let categoryIDs = Set(try loadCategories().map(\.id))
+            let projectIDs = Set(try loadProjects().map(\.id))
+            let decoder = JSONDecoder()
             for (segmentID, beforePayload, afterPayload, beforeReason) in changes {
-                let before = try JSONDecoder().decode(SegmentClassification.self, from: Data(beforePayload.utf8))
-                let after = try JSONDecoder().decode(SegmentClassification.self, from: Data(afterPayload.utf8))
+                let before = try decoder.decode(SegmentClassification.self, from: Data(beforePayload.utf8))
+                let after = try decoder.decode(SegmentClassification.self, from: Data(afterPayload.utf8))
                 guard let current = try loadClassification(segmentID: segmentID) else { continue }
                 // Deleting a rule clears its FK; compare the actual decision while accepting that clearing.
                 var expected = after
                 if action.0 != nil { expected.ruleID = nil }
                 guard current == expected else { continue }
                 var safeBefore = before
-                if let priorRule = before.ruleID, !(try loadRules().contains { $0.id == priorRule }) { safeBefore.ruleID = nil }
-                if let categoryID = safeBefore.categoryID, !(try loadCategories().contains { $0.id == categoryID }) { safeBefore.categoryID = nil }
-                if let projectID = safeBefore.projectID, !(try loadProjects().contains { $0.id == projectID }) { safeBefore.projectID = nil }
-                try saveClassification(safeBefore)
-                try saveReason(beforeReason, segmentID: segmentID)
+                if let priorRule = before.ruleID, !ruleIDs.contains(priorRule) { safeBefore.ruleID = nil }
+                if let categoryID = safeBefore.categoryID, !categoryIDs.contains(categoryID) { safeBefore.categoryID = nil }
+                if let projectID = safeBefore.projectID, !projectIDs.contains(projectID) { safeBefore.projectID = nil }
+                try saveClassification(safeBefore, reason: beforeReason)
                 restored += 1
             }
             try execute("UPDATE correction_actions SET undone=1 WHERE id=?", bindings: [.text(id.uuidString)])
@@ -2584,8 +2687,8 @@ extension HagoStore {
         try execute("DELETE FROM correction_actions WHERE id IN (SELECT id FROM correction_actions ORDER BY created_at DESC LIMIT -1 OFFSET 100)")
     }
 
-    private func recordCorrection(actionID: UUID, before: SegmentClassification, after: SegmentClassification) throws {
-        let reason = try query("SELECT reason FROM classification_reasons WHERE segment_id=?", bindings: [.text(before.segmentID.uuidString)]) { stringColumn($0, 0) }.first ?? "Legacy classification"
+    private func recordCorrection(actionID: UUID, before: SegmentClassification, beforeReason: String? = nil, after: SegmentClassification) throws {
+        let reason = try beforeReason ?? query("SELECT reason FROM classification_reasons WHERE segment_id=?", bindings: [.text(before.segmentID.uuidString)]) { stringColumn($0, 0) }.first ?? "Legacy classification"
         try execute("INSERT INTO correction_changes(action_id, segment_id, before_payload, after_payload, before_reason) VALUES (?, ?, ?, ?, ?)",
                     bindings: [.text(actionID.uuidString), .text(before.segmentID.uuidString), .text(try encoded(before)), .text(try encoded(after)), .text(reason)])
     }
@@ -2611,23 +2714,25 @@ extension HagoStore {
             FROM classifications c JOIN activity_segments s ON s.id=c.segment_id
             WHERE c.is_manual=1 AND c.kind IN ('work','personal')
             """) { classifiedSegmentColumn($0) }
-        var evidence: [String: [(ClassifiedSegment, Rule)]] = [:]
+        let calendar = Calendar.current
+        var evidence: [String: [(kind: ActivityKind, day: TimeInterval, rule: Rule)]] = [:]
         for entry in manualEntries {
+            let day = HagoCalendar.shared.dayInterval(containing: entry.segment.startedAt, calendar: calendar).start.timeIntervalSince1970
             let options = RememberedRuleFactory().rules(from: entry, kind: entry.classification.kind, categoryID: entry.classification.categoryID)
             for rule in options {
-                let key = learningContextKey(rule)
-                evidence[key, default: []].append((entry, rule))
+                evidence[learningContextKey(rule), default: []].append((entry.classification.kind, day, rule))
             }
         }
         let dismissed = Dictionary(uniqueKeysWithValues: try query("SELECT context_key, evidence_key FROM learning_dismissals") { (stringColumn($0, 0), stringColumn($0, 1)) })
-        let existing = try loadRules()
+        let existingActions = Dictionary(grouping: try loadRules().filter(\.enabled), by: learningContextKey)
+            .mapValues { $0.map(\.action) }
         return evidence.compactMap { key, entries in
-            guard let first = entries.first, entries.allSatisfy({ $0.0.classification.kind == first.0.classification.kind }) else { return nil }
-            let days = Set(entries.map { HagoCalendar.shared.dayInterval(containing: $0.0.segment.startedAt).start.timeIntervalSince1970 })
-            guard days.count >= 3, !existing.contains(where: { $0.enabled && learningContextKey($0) == key && $0.action == first.1.action }) else { return nil }
-            let fingerprint = "\(first.0.classification.kind.rawValue):\(days.sorted())"
+            guard let first = entries.first, entries.allSatisfy({ $0.kind == first.kind }) else { return nil }
+            let days = Set(entries.map(\.day))
+            guard days.count >= 3, !(existingActions[key]?.contains(first.rule.action) ?? false) else { return nil }
+            let fingerprint = "\(first.kind.rawValue):\(days.sorted())"
             guard dismissed[key] != fingerprint else { return nil }
-            return CorrectionLearningSuggestion(id: key, rule: first.1, days: days.count, evidenceKey: fingerprint)
+            return CorrectionLearningSuggestion(id: key, rule: first.rule, days: days.count, evidenceKey: fingerprint)
         }.sorted { $0.days > $1.days }
     }
 

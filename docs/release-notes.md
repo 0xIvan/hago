@@ -1,8 +1,7 @@
-- Activity is redesigned: Work, Personal and Needs review chips show the day's totals and filter the list, with search, a project filter, sorting and By App / Timeline views in one toolbar.
-- Step between days with ‹ Today ›, or jump to any date with the calendar button.
-- Hover a row to mark it Work or Personal, or remove it. Removing asks for confirmation first, and you can undo a reclassification from the banner.
-- Rows show the app icon, project, time range and a bar sized by duration. Clicking a row opens a cleaner details sheet for its rule.
-- Overview, Review, Activity, Reports, Rules, Projects and Categories now share the same page header, search field, filter menu and period controls.
+- Applying a rule to existing activity is much faster. Hago now re-checks only the recordings the rule can affect instead of every recording, so a site rule covering thousands of recordings applies in about a quarter of a second instead of half a minute.
+- Accepting AI suggestions, "Always…" choices from Review and undoing a learned rule are also much faster, and accepting several AI suggestions at once refreshes the app only once.
+- Classification checks only the rules that can match each recording, which also lightens the work Hago does while it tracks.
+- The database gains a few indexes the first time this version opens. Your data is unchanged.
 
 Download the universal DMG, open it and drag Hago to Applications. The app and DMG are Developer ID signed and notarized. Requires macOS 14 or newer; supports Apple Silicon and Intel.
 

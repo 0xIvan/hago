@@ -274,9 +274,7 @@ private struct ReviewTab: View {
             isPresented: $confirmsBulkAccept
         ) {
             Button("Create \(confidentSuggestions.count) Rules") {
-                for suggestion in confidentSuggestions {
-                    appState.applyReviewAISuggestion(suggestion, as: suggestion.kind)
-                }
+                appState.applyReviewAISuggestions(confidentSuggestions)
             }
             Button("Cancel", role: .cancel) {}
         } message: {

@@ -13,7 +13,10 @@ final class AppState: ObservableObject {
     @Published var currentStateLabel = "Starting"
     @Published var todaySummary = DaySummary.empty(on: Date())
     @Published var todayTimeline: [ClassifiedSegment] = []
-    @Published var reviewSegments: [ClassifiedSegment] = []
+    @Published var reviewSegments: [ClassifiedSegment] = [] {
+        didSet { reviewGroups = ActivityAggregation.reviewGroups(from: reviewSegments) }
+    }
+    @Published private(set) var reviewGroups: [AggregatedActivity] = []
     @Published var reviewAISuggestions: [ReviewAISuggestion] = []
     @Published var reviewAIAnalysisState = ReviewAIAnalysisState.idle
     @Published var reviewAISettings: ReviewAISettings
@@ -25,7 +28,10 @@ final class AppState: ObservableObject {
     @Published var recentSegments: [ClassifiedSegment] = []
     @Published var activityDate = Date()
     @Published var activitySegments: [ClassifiedSegment] = []
-    @Published var rules: [Rule] = []
+    @Published var rules: [Rule] = [] {
+        didSet { preparedRules = classifier.preparedRules(from: rules) }
+    }
+    private var preparedRules = PreparedRules([])
     @Published var ruleReviewRecords: [RuleReviewRecord] = []
     @Published var categories: [HagoCore.Category] = []
     @Published var projects: [Project] = []
@@ -366,10 +372,7 @@ final class AppState: ObservableObject {
     func saveRule(_ rule: Rule, reclassify scope: ReclassificationScope?) {
         guard flushTracking() else { return }
         do {
-            try store?.saveRule(rule)
-            if let scope {
-                try store?.reclassify(scope: scope)
-            }
+            try store?.saveRule(rule, reclassify: scope)
             try refresh()
             clearReviewAISuggestions()
             errorMessage = nil
@@ -380,10 +383,7 @@ final class AppState: ObservableObject {
 
     func deleteRule(id: UUID, reclassify scope: ReclassificationScope?) {
         do {
-            try store?.deleteRule(id: id)
-            if let scope {
-                try store?.reclassify(scope: scope)
-            }
+            try store?.deleteRule(id: id, reclassify: scope)
             try refresh()
             clearReviewAISuggestions()
             errorMessage = nil
@@ -728,10 +728,16 @@ final class AppState: ObservableObject {
     }
 
     func applyReviewAISuggestion(_ suggestion: ReviewAISuggestion) {
+        applyReviewAISuggestions([suggestion])
+    }
+
+    func applyReviewAISuggestions(_ suggestions: [ReviewAISuggestion]) {
         do {
             stopReviewAIAnalysis()
             reviewAIRevision += 1
-            _ = try store?.applyReviewAISuggestion(suggestion)
+            for suggestion in suggestions {
+                _ = try store?.applyReviewAISuggestion(suggestion)
+            }
             try refresh()
             pruneReviewAISuggestionsForCurrentBacklog()
             reviewAIAnalysisState = .completed
@@ -781,10 +787,6 @@ final class AppState: ObservableObject {
             errorMessage = error.localizedDescription
             return []
         }
-    }
-
-    var reviewGroups: [AggregatedActivity] {
-        ActivityAggregation.reviewGroups(from: reviewSegments)
     }
 
     func classifyReviewGroup(_ group: AggregatedActivity, as kind: ActivityKind) {
@@ -1081,7 +1083,7 @@ final class AppState: ObservableObject {
     }
 
     private func recordObservation(_ snapshot: ActivitySnapshot?) {
-        let classification = snapshot.map { classifier.classify(snapshot: $0, rules: rules) }
+        let classification = snapshot.map { classifier.classify(snapshot: $0, preparedRules: preparedRules) }
         let retained = classification?.kind == .ignored ? nil : snapshot
         let contextChanged = recorder.current?.snapshot.normalizedSignature != retained?.normalizedSignature
         currentSnapshot = retained
@@ -1103,7 +1105,7 @@ final class AppState: ObservableObject {
         do {
             guard let store else { throw HagoStoreError.missingDatabase }
             for segment in pendingCheckpoints.values.sorted(by: { $0.startedAt < $1.startedAt }) {
-                let result = classifier.classify(snapshot: segment.snapshot, rules: rules)
+                let result = classifier.classify(snapshot: segment.snapshot, preparedRules: preparedRules)
                 if result.kind != .ignored {
                     try store.checkpoint(segment: segment, classification: SegmentClassification(
                         segmentID: segment.id, kind: result.kind, categoryID: result.categoryID,
