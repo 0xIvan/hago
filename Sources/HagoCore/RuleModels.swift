@@ -14,15 +14,15 @@ public enum RuleField: String, CaseIterable, Codable, Identifiable, Sendable {
     public var displayName: String {
         switch self {
         case .appName:
-            "App"
+            "App name"
         case .bundleIdentifier:
-            "Bundle ID"
+            "App ID"
         case .windowTitle:
-            "Window Title"
+            "Window title"
         case .url:
-            "URL"
+            "Page address"
         case .host:
-            "Host"
+            "Website"
         }
     }
 }

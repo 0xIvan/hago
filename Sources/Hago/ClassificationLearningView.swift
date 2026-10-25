@@ -13,7 +13,7 @@ struct LearningSuggestionsSection: View {
                         Image(systemName: "lightbulb")
                             .foregroundStyle(.yellow)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(suggestion.rule.name)
+                            Text(appState.summary(for: suggestion.rule))
                             Text("You picked \(suggestion.rule.action.kind.displayName) on \(suggestion.days) days. Make it a rule?")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -51,20 +51,15 @@ struct RememberRulePreviewView: View {
                     .foregroundStyle(.secondary)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(rule.conditions) { condition in
-                    HStack(spacing: 6) {
-                        Text(condition.field.displayName)
-                            .foregroundStyle(.secondary)
-                        Text(condition.operation.displayName)
-                            .foregroundStyle(.secondary)
-                        Text(condition.value)
-                            .fontWeight(.medium)
-                            .textSelection(.enabled)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
+            Label {
+                Text(appState.summary(for: rule))
+                    .fontWeight(.medium)
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+            } icon: {
+                Image(systemName: (RuleScope(conditions: rule.conditions)?.target ?? .title).symbolName)
+                    .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)

@@ -2590,6 +2590,47 @@ extension HagoStore {
                                  examples: Array(affected.prefix(4).map { $0.segment.windowTitle.isEmpty ? $0.segment.appName : $0.segment.windowTitle }))
     }
 
+    public func ruleMatchSummary(_ rule: Rule) throws -> RuleMatchSummary {
+        guard !rule.conditions.isEmpty else { return RuleMatchSummary(count: 0, seconds: 0) }
+        let conditions = rule.conditions.map(PreparedCondition.init)
+        var count = 0
+        var seconds: TimeInterval = 0
+        for candidate in try reclassificationCandidates(matching: rule, startDate: nil)
+            where PreparedCondition.matches(conditions, values: SnapshotValues(candidate.segment.snapshot)) {
+            count += 1
+            seconds += candidate.segment.duration
+        }
+        return RuleMatchSummary(count: count, seconds: seconds)
+    }
+
+    public func recordedApps(limit: Int = 200) throws -> [RecordedApp] {
+        try query(
+            """
+            SELECT bundle_id, MAX(app_name), SUM(ended_at - started_at) AS total
+            FROM activity_segments
+            WHERE bundle_id <> ''
+            GROUP BY bundle_id
+            ORDER BY total DESC
+            LIMIT ?
+            """,
+            bindings: [.integer(limit)]
+        ) { RecordedApp(bundleIdentifier: stringColumn($0, 0), name: stringColumn($0, 1), seconds: doubleColumn($0, 2)) }
+    }
+
+    public func recordedHosts(limit: Int = 300) throws -> [String] {
+        try query(
+            """
+            SELECT host
+            FROM activity_segments
+            WHERE host <> ''
+            GROUP BY host
+            ORDER BY SUM(ended_at - started_at) DESC
+            LIMIT ?
+            """,
+            bindings: [.integer(limit)]
+        ) { stringColumn($0, 0) }
+    }
+
     @discardableResult
     public func applyRememberedRule(_ rule: Rule) throws -> UUID {
         guard rule.action.kind != .ignored else {

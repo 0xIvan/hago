@@ -31,6 +31,19 @@ public enum StarterPresets {
     }
 }
 
+public struct RuleMatchSummary: Equatable, Sendable {
+    public var count: Int
+    public var seconds: TimeInterval
+}
+
+public struct RecordedApp: Identifiable, Equatable, Sendable {
+    public var bundleIdentifier: String
+    public var name: String
+    public var seconds: TimeInterval
+
+    public var id: String { bundleIdentifier }
+}
+
 public struct RuleImpactPreview: Sendable {
     public var affectedCount: Int
     public var affectedSeconds: TimeInterval

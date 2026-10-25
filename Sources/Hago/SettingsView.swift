@@ -10,7 +10,7 @@ struct RulesSettingsView: View {
     @State private var kindFilter = RuleKindFilter.all
     @State private var statusFilter = RuleStatusFilter.all
     @State private var sourceFilter = RuleSourceFilter.all
-    @State private var fieldFilter = RuleFieldFilter.all
+    @State private var targetFilter = RuleTargetFilter.all
     @State private var showsBuiltIns = false
 
     private var specificRecords: [RuleReviewRecord] {
@@ -26,7 +26,7 @@ struct RulesSettingsView: View {
     }
 
     private var activeFilterCount: Int {
-        [kindFilter != .all, statusFilter != .all, sourceFilter != .all, fieldFilter != .all].filter { $0 }.count
+        [kindFilter != .all, statusFilter != .all, sourceFilter != .all, targetFilter != .all].filter { $0 }.count
     }
 
     var body: some View {
@@ -88,6 +88,7 @@ struct RulesSettingsView: View {
                     appState.saveRule(savedRule, reclassify: scope)
                 }
             )
+            .environmentObject(appState)
         }
     }
 
@@ -99,7 +100,7 @@ struct RulesSettingsView: View {
                 kindFilter = .all
                 statusFilter = .all
                 sourceFilter = .all
-                fieldFilter = .all
+                targetFilter = .all
             }) {
                 Picker("Result", selection: $kindFilter) {
                     ForEach(RuleKindFilter.allCases) { filter in
@@ -116,8 +117,8 @@ struct RulesSettingsView: View {
                         Text(filter.title).tag(filter)
                     }
                 }
-                Picker("Matches On", selection: $fieldFilter) {
-                    ForEach(RuleFieldFilter.allCases) { filter in
+                Picker("Covers", selection: $targetFilter) {
+                    ForEach(RuleTargetFilter.allCases) { filter in
                         Text(filter.title).tag(filter)
                     }
                 }
@@ -131,7 +132,7 @@ struct RulesSettingsView: View {
                     isBuiltIn: false,
                     action: RuleAction(kind: .work, categoryID: categoryID(for: .work), projectID: nil),
                     conditions: [
-                        RuleCondition(field: .host, operation: .equals, value: "")
+                        RuleCondition(field: .host, operation: .domain, value: "")
                     ],
                     origin: .user
                 )
@@ -159,17 +160,21 @@ struct RulesSettingsView: View {
                 editingRule = rule
             } label: {
                 HStack(spacing: 12) {
+                    RuleScopeIcon(rule: rule)
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 8) {
-                            Text(rule.name)
+                            Text(appState.summary(for: rule))
                                 .font(.headline)
                                 .lineLimit(1)
+                                .truncationMode(.middle)
                             ActivityKindBadge(kind: rule.action.kind)
                         }
-                        Text(RuleDescription.summary(for: rule))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                        if RuleScope(conditions: rule.conditions) == nil {
+                            Text(rule.name)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
                         HStack(spacing: 8) {
                             Text(record.origin.displayName)
                             Text(record.matchedSegmentCount == 1 ? "1 match" : "\(record.matchedSegmentCount) matches")
@@ -227,7 +232,7 @@ struct RulesSettingsView: View {
                 return false
             }
 
-            if let field = fieldFilter.field, !rule.conditions.contains(where: { $0.field == field }) {
+            if targetFilter != .all, targetFilter != RuleTargetFilter(rule: rule) {
                 return false
             }
 
@@ -249,7 +254,8 @@ struct RulesSettingsView: View {
             rule.isBuiltIn ? "built in" : "user",
             rule.enabled ? "enabled" : "disabled",
             projectName(for: rule) ?? "",
-            RuleDescription.summary(for: rule)
+            RuleDescription.summary(for: rule),
+            appState.summary(for: rule)
         ]
     }
 
@@ -425,264 +431,54 @@ private enum RuleSourceFilter: String, CaseIterable, Identifiable {
     }
 }
 
-private enum RuleFieldFilter: String, CaseIterable, Identifiable {
+private enum RuleTargetFilter: String, CaseIterable, Identifiable {
     case all
-    case appName
-    case bundleIdentifier
-    case windowTitle
-    case url
-    case host
+    case app
+    case website
+    case page
+    case title
+    case custom
+
+    init(rule: Rule) {
+        switch RuleScope(conditions: rule.conditions)?.target {
+        case .app: self = .app
+        case .website: self = .website
+        case .page: self = .page
+        case .title: self = .title
+        case nil: self = .custom
+        }
+    }
 
     var id: String {
         rawValue
     }
 
     var title: String {
-        field?.displayName ?? "Any Field"
-    }
-
-    var field: RuleField? {
         switch self {
-        case .all:
-            nil
-        case .appName:
-            .appName
-        case .bundleIdentifier:
-            .bundleIdentifier
-        case .windowTitle:
-            .windowTitle
-        case .url:
-            .url
-        case .host:
-            .host
+        case .all: "Anything"
+        case .app: "Apps"
+        case .website: "Websites"
+        case .page: "Pages"
+        case .title: "Window titles"
+        case .custom: "Advanced"
         }
     }
 }
 
-struct RuleEditorView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var name: String
-    @State private var priority: Int
-    @State private var enabled: Bool
-    @State private var kind: ActivityKind
-    @State private var projectIDValue: String
-    @State private var conditions: [RuleCondition]
-    @State private var reclassificationScope: ReclassificationScope?
-
-    var rule: Rule
-    var projects: [Project]
-    var categories: [HagoCore.Category]
-    var allowsDelete: Bool
-    var lockedKind: ActivityKind?
-    var onDelete: (Rule, ReclassificationScope?) -> Void
-    var onSave: (Rule, ReclassificationScope?) -> Void
-
-    init(
-        rule: Rule,
-        projects: [Project],
-        categories: [HagoCore.Category],
-        allowsDelete: Bool = true,
-        lockedKind: ActivityKind? = nil,
-        onDelete: @escaping (Rule, ReclassificationScope?) -> Void,
-        onSave: @escaping (Rule, ReclassificationScope?) -> Void
-    ) {
-        self.rule = rule
-        self.projects = projects
-        self.categories = categories
-        self.allowsDelete = allowsDelete
-        self.lockedKind = lockedKind
-        self.onDelete = onDelete
-        self.onSave = onSave
-
-        _name = State(initialValue: rule.name)
-        _priority = State(initialValue: rule.priority)
-        _enabled = State(initialValue: rule.enabled)
-        _kind = State(initialValue: lockedKind ?? rule.action.kind)
-        _projectIDValue = State(initialValue: rule.action.projectID?.uuidString ?? "")
-        _conditions = State(initialValue: rule.conditions.isEmpty
-            ? [RuleCondition(field: .windowTitle, operation: .contains, value: "")]
-            : rule.conditions)
-        _reclassificationScope = State(initialValue: .today)
-    }
-
-    private var isNew: Bool {
-        rule.name.isEmpty
-    }
-
-    private var hasEmptyCondition: Bool {
-        conditions.contains { $0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    }
+struct RuleScopeIcon: View {
+    let rule: Rule
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(isNew ? (lockedKind == .ignored ? "Never Record" : "New Rule") : "Edit Rule")
-                .font(.title2.weight(.semibold))
-                .padding([.horizontal, .top], 20)
-
-            Form {
-                Section {
-                    ForEach($conditions) { $condition in
-                        HStack(spacing: 8) {
-                            Picker("Field", selection: $condition.field) {
-                                ForEach(RuleField.allCases) { field in
-                                    Text(field.displayName).tag(field)
-                                }
-                            }
-                            .labelsHidden()
-                            .fixedSize()
-
-                            Picker("Operation", selection: $condition.operation) {
-                                ForEach(RuleOperation.allCases) { operation in
-                                    Text(operation.displayName).tag(operation)
-                                }
-                            }
-                            .labelsHidden()
-                            .fixedSize()
-
-                            TextField("Value", text: $condition.value, prompt: Text(placeholder(for: condition.field)))
-                                .labelsHidden()
-
-                            if conditions.count > 1 {
-                                Button {
-                                    conditions.removeAll { $0.id == condition.id }
-                                } label: {
-                                    Image(systemName: "minus.circle.fill")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Remove this condition")
-                            }
-                        }
-                    }
-
-                    Button {
-                        conditions.append(RuleCondition(field: .windowTitle, operation: .contains, value: ""))
-                    } label: {
-                        Label("Add Condition", systemImage: "plus")
-                    }
-                    .buttonStyle(.borderless)
-                } header: {
-                    Text("When activity matches")
-                } footer: {
-                    if conditions.count > 1 {
-                        Text("All conditions must match.")
-                    }
-                }
-
-                if lockedKind == nil {
-                    Section("Classify it as") {
-                        Picker("Result", selection: $kind) {
-                            ForEach(ActivityKind.allCases.filter { $0 != .ignored || rule.action.kind == .ignored }) { kind in
-                                Text(kind.displayName).tag(kind)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-
-                        Picker("Project", selection: $projectIDValue) {
-                            Text("None").tag("")
-                            ForEach(projects.filter { !$0.isArchived }) { project in
-                                Text(project.name).tag(project.id.uuidString)
-                            }
-                        }
-                    }
-                }
-
-                Section {
-                    TextField("Name", text: $name, prompt: Text(suggestedName))
-                    Toggle("Enabled", isOn: $enabled)
-                    Picker("Apply to existing activity", selection: $reclassificationScope) {
-                        Text("Don't Change").tag(ReclassificationScope?.none)
-                        ForEach(ReclassificationScope.allCases) { scope in
-                            Text(scope.displayName).tag(ReclassificationScope?.some(scope))
-                        }
-                    }
-                    if lockedKind == nil {
-                        Stepper(value: $priority, in: 1...2_000) {
-                            LabeledContent("Priority", value: "\(priority)")
-                        }
-                    }
-                } header: {
-                    Text("Details")
-                } footer: {
-                    if lockedKind == nil {
-                        Text("More specific rules win over broader ones; priority breaks ties. Ignore rules always win.")
-                    }
-                }
+        Group {
+            if let scope = RuleScope(conditions: rule.conditions), scope.target == .app {
+                AppIconView(bundleIdentifier: scope.normalizedValue, size: 24)
+            } else {
+                Image(systemName: (RuleScope(conditions: rule.conditions)?.target.symbolName) ?? "slider.horizontal.3")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
             }
-            .formStyle(.grouped)
-
-            HStack {
-                if allowsDelete && !isNew {
-                    Button(role: .destructive) {
-                        onDelete(rule, reclassificationScope)
-                        dismiss()
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                }
-
-                Spacer()
-
-                Button("Cancel") {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Button(isNew ? "Add" : "Save") {
-                    onSave(updatedRule(), reclassificationScope)
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(hasEmptyCondition)
-            }
-            .padding([.horizontal, .bottom], 20)
         }
-        .frame(minWidth: 600, maxWidth: 600, minHeight: 400)
-    }
-
-    private var suggestedName: String {
-        let value = conditions.first?.value.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !value.isEmpty else { return "Rule name" }
-        return lockedKind == .ignored ? "Ignore \(value)" : "\(kind.displayName): \(value)"
-    }
-
-    private func placeholder(for field: RuleField) -> String {
-        switch field {
-        case .appName: "Slack"
-        case .bundleIdentifier: "com.tinyspeck.slackmacgap"
-        case .windowTitle: "Standup"
-        case .url: "https://github.com/acme"
-        case .host: "github.com"
-        }
-    }
-
-    private func updatedRule() -> Rule {
-        var updatedRule = rule
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        updatedRule.name = trimmedName.isEmpty ? suggestedName : trimmedName
-        updatedRule.priority = priority
-        updatedRule.enabled = enabled
-        updatedRule.isBuiltIn = false
-        if rule.origin == .preset {
-            updatedRule.origin = .user
-            updatedRule.presetID = nil
-        }
-        let resultKind = lockedKind ?? kind
-        updatedRule.action = RuleAction(
-            kind: resultKind,
-            categoryID: categories.first { $0.kind == resultKind }?.id,
-            projectID: lockedKind == nil ? UUID(uuidString: projectIDValue) : nil
-        )
-        updatedRule.conditions = conditions.map { condition in
-            var trimmed = condition
-            trimmed.value = condition.value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed
-        }
-
-        return updatedRule
+        .frame(width: 24, height: 24)
     }
 }
 
@@ -1034,7 +830,8 @@ struct PrivacySettingsView: View {
                     Menu {
                         Button("An App…") { addIgnoreRule(field: .bundleIdentifier, operation: .equals) }
                         Button("A Website…") { addIgnoreRule(field: .host, operation: .domain) }
-                        Button("Window Titles Containing…") { addIgnoreRule(field: .windowTitle, operation: .contains) }
+                        Button("A Page…") { addIgnoreRule(field: .url, operation: .equals) }
+                        Button("Window Titles…") { addIgnoreRule(field: .windowTitle, operation: .contains) }
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
@@ -1058,6 +855,7 @@ struct PrivacySettingsView: View {
                     appState.saveRule(savedRule, reclassify: scope)
                 }
             )
+            .environmentObject(appState)
         }
     }
 
@@ -1094,6 +892,9 @@ private struct IgnoreRuleRow: View {
 
     private var detail: String {
         var parts = [RuleDescription.summary(for: rule)]
+        if let scope = RuleScope(conditions: rule.conditions) {
+            parts = [scope.summary(appName: { DetectedWorkApp.application(withID: $0)?.name ?? $0 })]
+        }
         if rule.isBuiltIn { parts.append("Built-in") }
         return parts.joined(separator: " · ")
     }

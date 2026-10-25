@@ -32,6 +32,9 @@ final class AppState: ObservableObject {
         didSet { preparedRules = classifier.preparedRules(from: rules) }
     }
     private var preparedRules = PreparedRules([])
+    private var appNames: [String: String] = [:]
+    private var cachedRecordedApps: [RecordedApp]?
+    private var cachedRecordedHosts: [String]?
     @Published var ruleReviewRecords: [RuleReviewRecord] = []
     @Published var categories: [HagoCore.Category] = []
     @Published var projects: [Project] = []
@@ -854,6 +857,37 @@ final class AppState: ObservableObject {
 
     func classificationExplanation(for entry: ClassifiedSegment) -> String {
         (try? store?.classificationExplanation(for: entry)) ?? "Classification reason unavailable"
+    }
+
+    func ruleMatchSummary(_ rule: Rule) -> RuleMatchSummary? {
+        try? store?.ruleMatchSummary(rule)
+    }
+
+    func recordedApps() -> [RecordedApp] {
+        if let cachedRecordedApps { return cachedRecordedApps }
+        let apps = (try? store?.recordedApps()) ?? []
+        cachedRecordedApps = apps
+        return apps
+    }
+
+    func recordedHosts() -> [String] {
+        if let cachedRecordedHosts { return cachedRecordedHosts }
+        let hosts = (try? store?.recordedHosts()) ?? []
+        cachedRecordedHosts = hosts
+        return hosts
+    }
+
+    func appName(for bundleIdentifier: String) -> String {
+        if let name = appNames[bundleIdentifier] { return name }
+        let name = DetectedWorkApp.application(withID: bundleIdentifier)?.name
+            ?? recordedApps().first { $0.bundleIdentifier == bundleIdentifier }?.name
+            ?? bundleIdentifier
+        appNames[bundleIdentifier] = name
+        return name
+    }
+
+    func summary(for rule: Rule) -> String {
+        RuleScope(conditions: rule.conditions)?.summary(appName: appName(for:)) ?? RuleDescription.summary(for: rule)
     }
 
     func previewRememberedRule(_ rule: Rule) throws -> RuleImpactPreview {

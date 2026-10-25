@@ -504,6 +504,7 @@ private enum ReviewSuggestionChoice {
 }
 
 private struct ReviewGroupRow: View {
+    @EnvironmentObject private var appState: AppState
     let entry: ReviewEntry
     let explanation: String
     let recordingSummary: String
@@ -627,8 +628,7 @@ private struct ReviewGroupRow: View {
     }
 
     private func optionTitle(_ rule: Rule) -> String {
-        let name = rule.name.hasPrefix("Remember ") ? String(rule.name.dropFirst("Remember ".count)) : rule.name
-        return name.prefix(1).uppercased() + name.dropFirst()
+        appState.summary(for: rule)
     }
 }
 
@@ -747,6 +747,7 @@ private struct AppliedReviewRulesView: View {
                     reload()
                 }
             )
+            .environmentObject(appState)
         }
     }
 
@@ -1317,7 +1318,7 @@ private struct ActivityRuleInspectorView: View {
                                 if !options.isEmpty {
                                     Section("Always \(kind.displayName)") {
                                         ForEach(options) { rule in
-                                            Button(rule.name) { rememberingRule = rule }
+                                            Button(appState.summary(for: rule)) { rememberingRule = rule }
                                         }
                                     }
                                 }
