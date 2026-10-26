@@ -182,12 +182,16 @@ public final class HagoStore {
         }
     }
 
-    /// Checkpoints only ever extend a recording; this is the one path that shortens its end.
-    public func endRecording(id: UUID, at end: Date) throws {
-        try execute(
-            "UPDATE activity_segments SET ended_at = MAX(started_at, MIN(ended_at, ?)) WHERE id = ?",
-            bindings: [.double(end.timeIntervalSince1970), .text(id.uuidString)]
-        )
+    /// Checkpoints only ever extend a recording; this is the one path that cuts time back. Everything
+    /// recorded after `cutoff` is time nobody was at the Mac, whichever recording it landed in.
+    public func endRecordings(at cutoff: Date) throws {
+        try transaction {
+            try execute("DELETE FROM activity_segments WHERE started_at >= ?", bindings: [.double(cutoff.timeIntervalSince1970)])
+            try execute(
+                "UPDATE activity_segments SET ended_at = ? WHERE ended_at > ?",
+                bindings: [.double(cutoff.timeIntervalSince1970), .double(cutoff.timeIntervalSince1970)]
+            )
+        }
     }
 
     public func removeTime(segmentID: UUID, from start: Date, to end: Date) throws {
@@ -860,8 +864,8 @@ public final class HagoStore {
         }
     }
 
-    /// Before runs were one transaction, a crash could leave one marked running with its changes applied.
-    /// Marking it failed with its real count makes it undoable again.
+    /// Before runs were one transaction, a crash or error could leave a run marked running, or failed with
+    /// a zero count, while its changes were applied. Recording its real count makes it undoable again.
     private func recoverInterruptedReviewAIRuns() throws {
         try execute(
             """
@@ -870,13 +874,14 @@ public final class HagoStore {
                 SELECT COUNT(*) FROM review_ai_decisions
                 WHERE run_id = review_ai_runs.id AND disposition IN (?, ?)
             )
-            WHERE status = ?
+            WHERE status = ? OR (status = ? AND automatically_applied_count = 0)
             """,
             bindings: [
                 .text(ReviewAIRunStatus.failed.rawValue),
                 .text(ReviewAIDecisionDisposition.automaticallyApplied.rawValue),
                 .text(ReviewAIDecisionDisposition.pendingAutomaticApply.rawValue),
-                .text(ReviewAIRunStatus.running.rawValue)
+                .text(ReviewAIRunStatus.running.rawValue),
+                .text(ReviewAIRunStatus.failed.rawValue)
             ]
         )
     }

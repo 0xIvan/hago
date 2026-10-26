@@ -769,15 +769,16 @@ private struct ReviewTab: View {
         }
     }
 
-    /// Choosing what AI picked accepts its rule. Work or Personal on a whole site or app remembers it,
-    /// so it never comes back to Review; a single page or window only files those recordings.
+    /// Ignore always asks first and deletes only the recordings shown, even when AI picked it. On a whole
+    /// site or app, choosing what AI picked accepts its rule, and Work or Personal remembers it, so it never
+    /// comes back to Review; a single page or window only files those recordings.
     private func decide(_ row: ReviewRow, as kind: ActivityKind, in rows: [ReviewRow]) {
-        if let pick = row.pick, ReviewSuggestionChoice.kind(pick) == kind {
-            accept(pick, for: row, in: rows)
-            return
-        }
         if kind == .ignored {
             pendingIgnore = PendingReviewIgnore(row: row, rows: rows)
+            return
+        }
+        if !row.isPage, let pick = row.pick, ReviewSuggestionChoice.kind(pick) == kind {
+            accept(pick, for: row, in: rows)
             return
         }
         file(row, as: kind, in: rows)

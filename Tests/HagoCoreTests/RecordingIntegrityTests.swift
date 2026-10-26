@@ -133,16 +133,18 @@ struct RecordingIntegrityTests {
         defer { try? FileManager.default.removeItem(at: url) }
         let store = try HagoStore(databaseURL: url)
         var recorder = ActivityRecorder()
+        let retitled = ActivitySnapshot(appName: "Reader", bundleIdentifier: "example.reader", processIdentifier: 12,
+                                        windowTitle: "Retitled while away", url: nil, source: .macOS)
         _ = recorder.observe(snapshot, at: base, uptime: 0)
         for offset in stride(from: 5, through: 600, by: 5) {
-            for interval in recorder.observe(snapshot, at: base.addingTimeInterval(Double(offset)), uptime: Double(offset)) {
+            let current = offset < 300 ? snapshot : retitled
+            for interval in recorder.observe(current, at: base.addingTimeInterval(Double(offset)), uptime: Double(offset)) {
                 try store.checkpoint(segment: interval, classification: classification(interval))
             }
         }
 
-        let away = recorder.endCurrent(at: base.addingTimeInterval(120))
-        let ended = try #require(away)
-        try store.endRecording(id: ended.id, at: ended.endedAt)
+        try store.endRecordings(at: base.addingTimeInterval(120))
+        _ = recorder.endCurrent(at: base.addingTimeInterval(120))
         _ = recorder.observe(snapshot, at: base.addingTimeInterval(900), uptime: 900)
         for interval in recorder.observe(snapshot, at: base.addingTimeInterval(905), uptime: 905) {
             try store.checkpoint(segment: interval, classification: classification(interval))

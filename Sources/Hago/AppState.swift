@@ -66,6 +66,8 @@ final class AppState: ObservableObject {
     private var timer: Timer?
     private(set) var backups: DatabaseBackups?
     private var backedUpDay: Date?
+    private var backupRetryAt = Date.distantPast
+    private var lastWatchedAt: Date?
     private var captureTask: Task<Void, Never>?
     private var captureRevision = 0
     @Published var captureCapabilityLabel = "Checking capture capabilities"
@@ -1177,39 +1179,52 @@ final class AppState: ObservableObject {
         tick()
     }
 
+    /// Away is measured from the later of the last input and the last moment a video or call was
+    /// playing, so time spent watching is never cut back once playback stops.
     private func awaySince(now: Date) -> Date? {
         guard awayAfterMinutes > 0 else { return nil }
-        let idle = IdleMonitor.secondsSinceInput()
-        guard idle >= TimeInterval(awayAfterMinutes * 60), !IdleMonitor.someoneIsWatching() else { return nil }
-        return now.addingTimeInterval(-idle)
+        if IdleMonitor.someoneIsWatching() {
+            lastWatchedAt = now
+            return nil
+        }
+        let lastInput = now.addingTimeInterval(-IdleMonitor.secondsSinceInput())
+        let cutoff = max(lastInput, lastWatchedAt ?? .distantPast)
+        guard now.timeIntervalSince(cutoff) >= TimeInterval(awayAfterMinutes * 60) else { return nil }
+        return cutoff
     }
 
-    private func stepAway(at lastInput: Date) {
-        isAway = true
+    /// Becomes Away only once the cut is saved; a failed write is retried on the next tick.
+    private func stepAway(at cutoff: Date) {
         captureRevision += 1
         captureTask?.cancel()
         captureTask = nil
-        persistCheckpoints()
-        currentSnapshot = nil
-        currentClassification = nil
-        guard let ended = recorder.endCurrent(at: lastInput) else { return }
+        guard persistCheckpoints(), let store else { return }
         do {
-            try store?.endRecording(id: ended.id, at: ended.endedAt)
-            try refreshRecordedActivity(includingReview: false)
+            try store.endRecordings(at: cutoff)
         } catch {
             errorMessage = error.localizedDescription
+            return
         }
+        _ = recorder.endCurrent(at: cutoff)
+        isAway = true
+        currentSnapshot = nil
+        currentClassification = nil
+        try? refreshRecordedActivity(includingReview: false)
     }
 
     private func backUpOncePerDay(now: Date) {
         let day = HagoCalendar.shared.dayInterval(containing: now).start
-        guard let backups, backedUpDay != day else { return }
+        guard let backups, backedUpDay != day, now >= backupRetryAt else { return }
         backedUpDay = day
-        DispatchQueue.global(qos: .utility).async {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             do {
                 try backups.backUpIfNeeded(now: now)
             } catch {
                 NSLog("Hago backup failed: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self?.backedUpDay = nil
+                    self?.backupRetryAt = Date().addingTimeInterval(15 * 60)
+                }
             }
         }
     }

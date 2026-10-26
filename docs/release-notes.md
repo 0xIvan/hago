@@ -1,14 +1,11 @@
-- New installs start useful. Pick your role during setup and Hago turns on starter rules for it, plus everyday personal apps and sites. That's about 120 to 200 apps and sites filed from the first minute, across 19 roles from developers and designers to healthcare, legal and students.
-- Hago stops counting when you step away. After 10 minutes without keyboard or mouse use, the recording ends at your last input, so time away isn't counted. Videos and calls still count. Change or turn this off in Tracking.
-- Safari, Arc, Firefox and other browsers now count as app time. Before, their time was dropped. Sites and page titles are still recorded only in Chrome, which can tell Hago when a window is private.
-- In Review, choosing Work or Personal for a whole site or app remembers it, so it's filed automatically from now on, past recordings included. Undo takes it back. A single page or window still files only that page or window.
-- Ignore in Review now asks first, and Undo never reaches back to an earlier choice after something was deleted.
-- Your data in Privacy: export every recording as CSV, show the database in Finder, or delete all recorded time while keeping your rules and settings.
-- Hago keeps a daily backup of its database for the last three days.
-- AI suggestions stay off until you set up a provider. Automatic filing is now all-or-nothing, so a crash midway can't leave changes you can't undo. AI commands that hang or ignore their input are stopped at their time limit.
-- The menu bar shows a pause icon while tracking is paused. Time spent in Hago itself isn't counted.
-- Faster: today's totals read only today's recordings, switching apps no longer reloads the whole history, and Review suggestions compute about five times faster on long histories.
-- Fixed: recordings that ran past 4am were missing from that day's Activity. Tracking now starts even if saved AI state can't be read.
+Fixes for the 0.2.20 changes:
+
+- Ignore in Review always asks first and deletes only the recordings shown, even when AI picked Ignore. Undo still never reaches back past it.
+- Stepping away now trims every recording made after your last input, not only the latest one.
+- Time spent watching a video or on a call is no longer cut once it ends.
+- If saving the away cut fails, Hago tries again instead of keeping the idle time.
+- AI runs from older versions that stopped partway can now be undone.
+- A failed daily backup is retried after 15 minutes instead of waiting until the next day.
 
 Download the universal DMG, open it and drag Hago to Applications. The app and DMG are Developer ID signed and notarized. Requires macOS 14 or newer; supports Apple Silicon and Intel.
 
