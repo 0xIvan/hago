@@ -181,6 +181,25 @@ struct ReviewAIHarnessTests {
     }
 
     @Test
+    func processRunnerTimeoutHoldsWhenTheChildIgnoresInputAndLeavesADescendant() async throws {
+        let startedAt = ContinuousClock.now
+        await #expect(throws: ReviewAIProcessError.timedOut) {
+            try await FoundationReviewAIProcessRunner().run(
+                ReviewAIProcessRequest(
+                    executablePath: "/bin/sh",
+                    arguments: ["-c", "sleep 30 & sleep 30"],
+                    input: Data(repeating: 65, count: 1_000_000),
+                    environment: ReviewAIProcessEnvironment.sanitized(from: [:]),
+                    workingDirectory: FileManager.default.temporaryDirectory,
+                    timeout: 0.3,
+                    maximumOutputBytes: 1_024
+                )
+            )
+        }
+        #expect(startedAt.duration(to: .now) < .seconds(5))
+    }
+
+    @Test
     func processRunnerStopsWhenTaskIsCancelled() async throws {
         let startedAt = ContinuousClock.now
         let task = Task {

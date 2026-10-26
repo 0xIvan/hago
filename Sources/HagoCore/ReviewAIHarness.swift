@@ -370,6 +370,7 @@ public struct FoundationReviewAIProcessRunner: ReviewAIProcessRunning {
         standardErrorPipe.fileHandleForReading.readabilityHandler = { handle in
             output.append(handle.availableData, stream: .standardError)
         }
+        let deadline = Date().addingTimeInterval(request.timeout)
 
         do {
             try processBox.launch(process)
@@ -383,13 +384,17 @@ public struct FoundationReviewAIProcessRunner: ReviewAIProcessRunning {
             throw ReviewAIProcessError.launchFailed(error.localizedDescription)
         }
 
-        if let inputPipe = process.standardInput as? Pipe {
-            inputPipe.fileHandleForWriting.write(request.input)
-            try? inputPipe.fileHandleForWriting.close()
+        // A child that never reads stdin must not hold the run past its deadline, or crash Hago with SIGPIPE.
+        if let input = (process.standardInput as? Pipe)?.fileHandleForWriting {
+            _ = fcntl(input.fileDescriptor, F_SETNOSIGPIPE, 1)
+            let data = request.input
+            DispatchQueue.global(qos: .utility).async {
+                try? input.write(contentsOf: data)
+                try? input.close()
+            }
         }
 
-        let deadline = Date().addingTimeInterval(request.timeout)
-        while process.isRunning && Date() < deadline && !output.exceededLimit {
+        while process.isRunning && Date() < deadline && !output.exceededLimit && !processBox.isCancelled {
             Thread.sleep(forTimeInterval: 0.02)
         }
 
@@ -406,10 +411,13 @@ public struct FoundationReviewAIProcessRunner: ReviewAIProcessRunning {
         }
 
         process.waitUntilExit()
+        // A descendant that inherited the pipes can keep them open forever, so the drain is bounded too.
+        let drainDeadline = Date().addingTimeInterval(1)
+        while !output.bothStreamsEnded && Date() < drainDeadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
         standardOutputPipe.fileHandleForReading.readabilityHandler = nil
         standardErrorPipe.fileHandleForReading.readabilityHandler = nil
-        output.append(standardOutputPipe.fileHandleForReading.readDataToEndOfFile(), stream: .standardOutput)
-        output.append(standardErrorPipe.fileHandleForReading.readDataToEndOfFile(), stream: .standardError)
 
         if output.exceededLimit {
             throw ReviewAIProcessError.outputLimitExceeded
@@ -480,6 +488,7 @@ private final class BoundedProcessOutput: @unchecked Sendable {
     private var outputData = Data()
     private var errorData = Data()
     private var limitExceeded = false
+    private var endedStreams = Set<Stream>()
 
     init(maximumBytes: Int, process: ProcessBox) {
         self.maximumBytes = maximumBytes
@@ -498,8 +507,13 @@ private final class BoundedProcessOutput: @unchecked Sendable {
         lock.withLock { errorData }
     }
 
+    var bothStreamsEnded: Bool {
+        lock.withLock { endedStreams.count == 2 }
+    }
+
     func append(_ data: Data, stream: Stream) {
         guard !data.isEmpty else {
+            _ = lock.withLock { endedStreams.insert(stream) }
             return
         }
 
