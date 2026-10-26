@@ -90,6 +90,8 @@ public final class HagoStore {
     private var cachedRules: [Rule]?
     private var cachedPreparedRules: PreparedRules?
     private var transactionDepth = 0
+    /// Lets overlap reads use a bounded started_at range instead of scanning all earlier history.
+    private var longestSegmentDuration: TimeInterval?
 
     public init(databaseURL: URL) throws {
         var connection: OpaquePointer?
@@ -171,6 +173,7 @@ public final class HagoStore {
                     "UPDATE activity_segments SET ended_at = MAX(ended_at, ?) WHERE id = ?",
                     bindings: [.double(segment.endedAt.timeIntervalSince1970), .text(segment.id.uuidString)]
                 )
+                noteSegmentDuration(segment.duration)
             } else {
                 try insertSegment(segment, classification: classification)
             }
@@ -201,7 +204,23 @@ public final class HagoStore {
         }
     }
 
+    private func noteSegmentDuration(_ duration: TimeInterval) {
+        if let longest = longestSegmentDuration, duration > longest {
+            longestSegmentDuration = duration
+        }
+    }
+
+    private func loadLongestSegmentDuration() throws -> TimeInterval {
+        if let longestSegmentDuration { return longestSegmentDuration }
+        let longest = try query("SELECT COALESCE(MAX(ended_at - started_at), 0) FROM activity_segments") {
+            sqlite3_column_double($0, 0)
+        }.first ?? 0
+        longestSegmentDuration = longest
+        return longest
+    }
+
     private func insertSegment(_ segment: ActivitySegment, classification: SegmentClassification) throws {
+        noteSegmentDuration(segment.duration)
         try execute(
             """
             INSERT OR REPLACE INTO activity_segments (
@@ -2043,13 +2062,13 @@ public final class HagoStore {
             LEFT JOIN projects p ON p.id = c.project_id
             LEFT JOIN categories cat ON cat.id = c.category_id
             LEFT JOIN rules r ON r.id = c.rule_id
-            WHERE \(includingOverlaps ? "s.ended_at > ?" : "s.started_at >= ?") AND s.started_at < ?
+            WHERE s.started_at >= ? AND s.started_at < ?\(includingOverlaps ? " AND s.ended_at > ?" : "")
             ORDER BY s.started_at ASC
             """,
             bindings: [
-                .double(start.timeIntervalSince1970),
+                .double(start.timeIntervalSince1970 - (includingOverlaps ? try loadLongestSegmentDuration() : 0)),
                 .double(end.timeIntervalSince1970)
-            ]
+            ] + (includingOverlaps ? [.double(start.timeIntervalSince1970)] : [])
         ) { statement in
             classifiedSegmentColumn(statement)
         }

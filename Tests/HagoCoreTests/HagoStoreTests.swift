@@ -627,6 +627,28 @@ struct HagoStoreTests {
     }
 
     @Test
+    func daySummaryCountsARecordingThatGrewAcrossTheDayStartAfterAnEarlierRead() throws {
+        let store = try makeStore()
+        let day = HagoCalendar.shared.dayInterval(containing: middayToday())
+        let short = segment(url: nil, startedAt: day.start.addingTimeInterval(3_600))
+        let work = SegmentClassification(
+            segmentID: short.id, kind: .work, categoryID: nil, projectID: nil, ruleID: nil, isManual: false
+        )
+        try store.save(segment: short, classification: work)
+        #expect(try store.daySummary(for: middayToday()).workSeconds == 120)
+
+        var long = segment(url: nil, startedAt: day.start.addingTimeInterval(-10 * 3_600))
+        let longWork = SegmentClassification(
+            segmentID: long.id, kind: .work, categoryID: nil, projectID: nil, ruleID: nil, isManual: false
+        )
+        try store.checkpoint(segment: long, classification: longWork)
+        long.endedAt = day.start.addingTimeInterval(1_800)
+        try store.checkpoint(segment: long, classification: longWork)
+
+        #expect(try store.daySummary(for: middayToday()).workSeconds == 120 + 1_800)
+    }
+
+    @Test
     func ruleReviewRecordsIdentifyConflictingRules() throws {
         let store = try makeStore()
         let condition = RuleCondition(field: .host, operation: .equals, value: "www.firecrawl.dev")

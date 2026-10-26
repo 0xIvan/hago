@@ -23,6 +23,10 @@ let package = Package(
             dependencies: ["HagoCore", .product(name: "Sparkle", package: "Sparkle")],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
+        .executableTarget(
+            name: "HagoBench",
+            dependencies: ["HagoCore"]
+        ),
         .testTarget(
             name: "HagoCoreTests",
             dependencies: ["HagoCore"]
