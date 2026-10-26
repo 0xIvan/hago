@@ -736,13 +736,26 @@ public final class HagoStore {
     }
 
     public func loadReviewAICache() throws -> [String: ReviewAICachedSuggestion] {
+        // An entry that no longer decodes is only lost advice; the group is analyzed again.
         let entries = try query("SELECT group_id, payload FROM review_ai_cache") { statement in
-            let value = try JSONDecoder().decode(
-                ReviewAICachedSuggestion.self, from: Data(stringColumn(statement, 1).utf8)
-            )
-            return (stringColumn(statement, 0), value)
+            (try? JSONDecoder().decode(ReviewAICachedSuggestion.self, from: Data(stringColumn(statement, 1).utf8)))
+                .map { (stringColumn(statement, 0), $0) }
         }
-        return Dictionary(uniqueKeysWithValues: entries)
+        return Dictionary(entries.compactMap { $0 }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Advice for groups that left Review is dropped instead of piling up. Entries AI already applied stay,
+    /// because they are what stops a group the user undid from being filed automatically again.
+    public func pruneReviewAICache(keepingGroupIDs groupIDs: Set<String>) throws {
+        let stale = try loadReviewAICache()
+            .filter { !groupIDs.contains($0.key) && !$0.value.automaticApplicationAttempted }
+            .map(\.key)
+        guard !stale.isEmpty else { return }
+        try transaction {
+            for id in stale {
+                try execute("DELETE FROM review_ai_cache WHERE group_id = ?", bindings: [.text(id)])
+            }
+        }
     }
 
     public func saveReviewAICache(_ entries: [ReviewAICachedSuggestion]) throws {

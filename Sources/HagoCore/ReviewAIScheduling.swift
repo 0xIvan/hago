@@ -243,6 +243,7 @@ public final class ReviewAIAnalysisService {
                 automaticApplicationAttempted: automaticallyApply
             )
         })
+        try store.pruneReviewAICache(keepingGroupIDs: Set(try currentRequest().groups.map(\.id)))
         return ReviewAIAnalysisResult(summary: summary, analyzedGroups: valid.count, reconciledEntries: reconciled)
     }
 }
