@@ -376,7 +376,8 @@ public final class HagoStore {
             if rule.enabled, matchingKinds.count > 1 {
                 issues.insert(.conflict)
             }
-            if rule.enabled, matchingRules.filter({ $0.action.kind == rule.action.kind }).count > 1 {
+            let sameKindRules = matchingRules.filter { $0.action.kind == rule.action.kind }
+            if rule.enabled, sameKindRules.count > 1, sameKindRules.contains(where: { $0.origin != .preset }) {
                 issues.insert(.duplicate)
             }
 
@@ -2683,6 +2684,8 @@ extension HagoStore {
                 if let old = existing.first(where: { $0.id == rule.id }) {
                     guard old.origin == .preset else { continue }
                     rule = old
+                } else if !selected.contains(pack.id) {
+                    continue
                 }
                 rule.enabled = selected.contains(pack.id)
                 try saveRuleWithinTransaction(rule)
