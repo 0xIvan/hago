@@ -739,11 +739,7 @@ private struct ReviewGroupRow: View {
         HStack(spacing: 6) {
             ForEach([ActivityKind.work, .personal]) { kind in
                 if kind == pickedKind {
-                    Button { decide(kind) } label: {
-                        Label(kind.displayName, systemImage: "sparkles")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .help("Accept AI's pick: \(pickHelp(kind))")
+                    pickButton(kind)
                 } else {
                     Button(kind.displayName) { decide(kind) }
                         .help("File these recordings as \(kind.displayName)")
@@ -751,11 +747,7 @@ private struct ReviewGroupRow: View {
             }
 
             if pickedKind == .ignored {
-                Button(role: .destructive) { decide(.ignored) } label: {
-                    Label("Ignore", systemImage: "sparkles")
-                }
-                .buttonStyle(.borderedProminent)
-                .help("Accept AI's pick: \(pickHelp(.ignored))")
+                pickButton(.ignored)
             } else {
                 Button(role: .destructive) { decide(.ignored) } label: {
                     Image(systemName: "eye.slash")
@@ -787,6 +779,16 @@ private struct ReviewGroupRow: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
+    }
+
+    private func pickButton(_ kind: ActivityKind) -> some View {
+        Button { decide(kind) } label: {
+            Label(kind == .ignored ? "Ignore" : kind.displayName, systemImage: "sparkles")
+                .foregroundStyle(.white)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(kind.tint)
+        .help("Accept AI's pick: \(pickHelp(kind))")
     }
 
     private func pickHelp(_ kind: ActivityKind) -> String {
