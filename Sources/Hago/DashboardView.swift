@@ -550,7 +550,7 @@ private struct ReviewTab: View {
     @FocusState private var listHasKeyboardFocus: Bool
 
     private var aiEnabled: Bool {
-        appState.reviewAISettings.selectedHarness != .disabled
+        appState.reviewAIIsReady
     }
 
     private var subjects: [ReviewRow] {

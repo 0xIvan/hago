@@ -171,6 +171,13 @@ final class AppState: ObservableObject {
             && (!harness.isDirectProvider || reviewAISettings.directDisclosureVersion == ReviewAIDirectCatalog.disclosureVersion))
     }
 
+    /// AI counts as set up only once the user confirmed what it sends and the provider can run.
+    var reviewAIIsReady: Bool {
+        let harness = reviewAISettings.selectedHarness
+        guard harness != .disabled, selectedReviewAIHarnessIsConfirmed else { return false }
+        return harness.isDirectProvider || selectedReviewAIHarnessStatus?.isAvailable == true
+    }
+
     var availableReviewAIModels: [ReviewAIModelOption] {
         if reviewAISettings.selectedHarness.isDirectProvider {
             return ReviewAIDirectCatalog.models(for: reviewAISettings.selectedHarness)

@@ -125,7 +125,7 @@ public struct ReviewAISettings: Equatable, Codable, Sendable {
     public var shareRedactedTitles: Bool
 
     public init(
-        selectedHarness: ReviewAIHarnessKind = .codex,
+        selectedHarness: ReviewAIHarnessKind = .disabled,
         automaticallyApplyHighConfidence: Bool = false,
         confirmedHarnesses: Set<ReviewAIHarnessKind> = [],
         customBinaryPaths: [String: String] = [:],
@@ -194,7 +194,7 @@ public struct ReviewAISettings: Equatable, Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         directDisclosureVersion = try container.decodeIfPresent(Int.self, forKey: .directDisclosureVersion) ?? 0
         shareRedactedTitles = try container.decodeIfPresent(Bool.self, forKey: .shareRedactedTitles) ?? false
-        selectedHarness = try container.decodeIfPresent(ReviewAIHarnessKind.self, forKey: .selectedHarness) ?? .codex
+        selectedHarness = try container.decodeIfPresent(ReviewAIHarnessKind.self, forKey: .selectedHarness) ?? .disabled
         automaticallyApplyHighConfidence = try container.decodeIfPresent(
             Bool.self,
             forKey: .automaticallyApplyHighConfidence
