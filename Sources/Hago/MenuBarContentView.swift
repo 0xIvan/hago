@@ -100,78 +100,80 @@ struct MenuBarContentView: View {
     }
 
     private var metrics: some View {
-        HStack(spacing: 14) {
-            metric(
-                title: "WORK TODAY",
-                value: formatter.compactDuration(appState.todaySummary.workSeconds),
-                color: .blue
-            )
-            Divider()
-                .frame(height: 36)
-            metric(
-                title: "TRACKED TODAY",
-                value: formatter.compactDuration(appState.todayTrackedSeconds),
-                color: .primary
-            )
+        HStack(spacing: 16) {
+            DayRing(
+                day: HagoCalendar.shared.dayInterval(containing: appState.todaySummary.date),
+                spans: ActivityAggregation.timelineSpans(from: appState.todayTimeline),
+                now: Date(),
+                lineWidth: 9
+            ) { _ in
+                VStack(spacing: 0) {
+                    Text(formatter.compactDuration(appState.todayTrackedSeconds))
+                        .font(.hagoNumber(15))
+                    Text("today")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 96, height: 96)
+
+            VStack(alignment: .leading, spacing: 9) {
+                metric(.work, seconds: appState.todaySummary.workSeconds)
+                metric(.personal, seconds: appState.todaySummary.personalSeconds)
+                if appState.todaySummary.reviewSeconds > 0 {
+                    metric(.review, seconds: appState.todaySummary.reviewSeconds)
+                }
+            }
         }
     }
 
-    private func metric(title: String, value: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.title3.weight(.semibold))
-                .monospacedDigit()
-                .foregroundStyle(color)
+    private func metric(_ kind: ActivityKind, seconds: TimeInterval) -> some View {
+        HStack(spacing: 7) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(kind.tint)
+                .frame(width: 4, height: 22)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(kind == .review ? "Not filed" : kind.displayName)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(formatter.compactDuration(seconds))
+                    .font(.hagoNumber(15))
+                    .foregroundStyle(kind.tint)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
     private var currentActivity: some View {
         if let snapshot = appState.currentSnapshot {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("CURRENT ACTIVITY")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Image(systemName: "app.dashed")
-                        .foregroundStyle(.secondary)
-                    Text(snapshot.appName)
+            HStack(spacing: 10) {
+                AppIconView(bundleIdentifier: snapshot.bundleIdentifier, host: snapshot.host, size: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(snapshot.host.isEmpty ? snapshot.appName : snapshot.host)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                }
-
-                if !snapshot.windowTitle.isEmpty {
-                    Text(snapshot.windowTitle)
-                        .font(.caption)
-                        .lineLimit(2)
-                }
-                if let url = snapshot.url, !url.isEmpty {
-                    Text(url)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
                         .truncationMode(.middle)
+                    if !snapshot.windowTitle.isEmpty {
+                        Text(snapshot.windowTitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
+                Spacer(minLength: 0)
             }
-            .padding(11)
+            .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            }
+            .background(HagoPalette.track, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .help(snapshot.url ?? snapshot.windowTitle)
         } else {
             Label("Waiting for current activity", systemImage: "hourglass")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(11)
-                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9))
+                .background(HagoPalette.track, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 
@@ -186,18 +188,8 @@ struct MenuBarContentView: View {
     }
 
     private func kindColor(_ kind: ActivityKind?) -> Color {
-        switch kind {
-        case .work:
-            .blue
-        case .personal:
-            .green
-        case .review:
-            .orange
-        case .ignored:
-            .secondary
-        case nil:
-            .secondary
-        }
+        guard let kind, kind != .ignored else { return .secondary }
+        return kind.tint
     }
 }
 

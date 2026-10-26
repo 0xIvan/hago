@@ -91,29 +91,29 @@ struct ReportsView: View {
 
     private func reportMetrics(_ report: ReportSummary, previous: ReportSummary) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            ReportMetricCard(
+            StatCard(
                 title: "Work",
                 value: formatter.compactDuration(report.workSeconds),
-                delta: durationDelta(report.workSeconds, previous.workSeconds),
-                color: .blue
+                detail: durationDelta(report.workSeconds, previous.workSeconds),
+                color: ActivityKind.work.tint
             )
-            ReportMetricCard(
+            StatCard(
                 title: "Personal",
                 value: formatter.compactDuration(report.personalSeconds),
-                delta: durationDelta(report.personalSeconds, previous.personalSeconds),
-                color: .green
+                detail: durationDelta(report.personalSeconds, previous.personalSeconds),
+                color: ActivityKind.personal.tint
             )
-            ReportMetricCard(
+            StatCard(
                 title: "Total",
                 value: formatter.compactDuration(report.totalSeconds),
-                delta: durationDelta(report.totalSeconds, previous.totalSeconds),
+                detail: durationDelta(report.totalSeconds, previous.totalSeconds),
                 color: .primary
             )
-            ReportMetricCard(
+            StatCard(
                 title: "Work Ratio",
                 value: percent(report.workRatio),
-                delta: ratioDelta(report.workRatio, previous.workRatio),
-                color: .purple
+                detail: ratioDelta(report.workRatio, previous.workRatio),
+                color: .primary
             )
         }
         .frame(maxWidth: .infinity)
@@ -248,9 +248,9 @@ private struct ReportPeriodChart: View {
             }
         }
         .chartForegroundStyleScale([
-            "Work": .blue,
-            "Personal": .green,
-            ActivityKind.review.displayName: .orange
+            "Work": ActivityKind.work.tint,
+            "Personal": ActivityKind.personal.tint,
+            ActivityKind.review.displayName: ActivityKind.review.tint
         ])
         .chartYScale(domain: 0...maximumHours)
         .chartOverlay { proxy in
@@ -343,9 +343,9 @@ private struct ReportChartTooltip: View {
 
             Divider()
 
-            tooltipRow("Work", seconds: bucket.workSeconds, color: .blue)
-            tooltipRow("Personal", seconds: bucket.personalSeconds, color: .green)
-            tooltipRow(ActivityKind.review.displayName, seconds: bucket.reviewSeconds, color: .orange)
+            tooltipRow("Work", seconds: bucket.workSeconds, color: ActivityKind.work.tint)
+            tooltipRow("Personal", seconds: bucket.personalSeconds, color: ActivityKind.personal.tint)
+            tooltipRow(ActivityKind.review.displayName, seconds: bucket.reviewSeconds, color: ActivityKind.review.tint)
             tooltipRow("Total", seconds: bucket.workSeconds + bucket.personalSeconds + bucket.reviewSeconds, color: .primary)
         }
         .font(.caption)
@@ -370,6 +370,7 @@ private struct ReportChartTooltip: View {
 private struct ReportBucketComparisonList: View {
     var currentBuckets: [TimeBucket]
     var previousBuckets: [TimeBucket]
+    var tint: Color = HagoPalette.work
 
     private let formatter = TimeFormatting()
 
@@ -384,18 +385,22 @@ private struct ReportBucketComparisonList: View {
                     .foregroundStyle(.secondary)
             }
 
+            let longest = max(currentBuckets.first?.seconds ?? 1, 1)
             ForEach(currentBuckets) { bucket in
-                HStack(spacing: 10) {
-                    Text(bucket.name)
-                        .lineLimit(1)
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(formatter.compactDuration(bucket.seconds))
-                            .font(.subheadline.monospacedDigit())
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(bucket.name)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
                         Text(delta(bucket.seconds, previousSecondsByName[bucket.name] ?? 0))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
+                        Text(formatter.compactDuration(bucket.seconds))
+                            .font(.subheadline.monospacedDigit())
+                            .frame(minWidth: 52, alignment: .trailing)
                     }
+                    ShareBar(fraction: bucket.seconds / longest, color: tint, height: 4)
                 }
             }
         }
@@ -409,29 +414,5 @@ private struct ReportBucketComparisonList: View {
 
         let sign = delta > 0 ? "+" : "-"
         return "\(sign)\(formatter.compactDuration(abs(delta)))"
-    }
-}
-
-private struct ReportMetricCard: View {
-    var title: String
-    var value: String
-    var delta: String
-    var color: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(size: 26, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(color)
-            Text(delta)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 }

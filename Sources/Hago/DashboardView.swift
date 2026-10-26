@@ -22,6 +22,9 @@ struct DashboardView: View {
                     }
                 }
             }
+            .safeAreaInset(edge: .bottom) {
+                SidebarTodayFooter()
+            }
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
         } detail: {
             selectedSectionView
@@ -62,6 +65,50 @@ struct DashboardView: View {
     }
 }
 
+private struct SidebarTodayFooter: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        HStack(spacing: 10) {
+            DayRing(
+                day: HagoCalendar.shared.dayInterval(containing: appState.todaySummary.date),
+                spans: ActivityAggregation.timelineSpans(from: appState.todayTimeline),
+                now: Date(),
+                lineWidth: 4
+            )
+            .frame(width: 30, height: 30)
+            .allowsHitTesting(false)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(appState.isTrackingPaused ? "Paused" : "Today")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(TimeFormatting().compactDuration(appState.todayTrackedSeconds))
+                    .font(.hagoNumber(14))
+            }
+
+            Spacer(minLength: 4)
+
+            Button {
+                appState.toggleTracking()
+            } label: {
+                Image(systemName: appState.isTrackingPaused ? "play.fill" : "pause.fill")
+                    .font(.caption)
+                    .frame(width: 24, height: 24)
+                    .background(HagoPalette.track, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help(appState.isTrackingPaused ? "Resume tracking" : "Pause tracking")
+            .accessibilityLabel(appState.isTrackingPaused ? "Resume tracking" : "Pause tracking")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture { appState.selectedSection = .overview }
+    }
+}
+
 private struct SidebarSectionLabel: View {
     let section: HagoSection
     let reviewCount: Int
@@ -78,74 +125,358 @@ private struct SidebarSectionLabel: View {
 
 private struct OverviewTab: View {
     @EnvironmentObject private var appState: AppState
+    @State private var week: ReportSummary?
+
     private let formatter = TimeFormatting()
+
+    private var summary: DaySummary { appState.todaySummary }
+
+    private var day: DateInterval {
+        HagoCalendar.shared.dayInterval(containing: summary.date)
+    }
+
+    private var spans: [ActivityTimelineSpan] {
+        ActivityAggregation.timelineSpans(from: appState.todayTimeline)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             PageTop {
                 PageHeader(
                     title: "Today",
-                    subtitle: "\(appState.todaySummary.date.formatted(.dateTime.weekday(.wide).day().month(.wide))) · \(HagoDuration.text(appState.todayTrackedSeconds)) tracked"
+                    subtitle: summary.date.formatted(.dateTime.weekday(.wide).day().month(.wide))
                 ) {
-                    if !appState.reviewGroups.isEmpty {
+                    if appState.reviewSubjectCount > 0 {
                         Button {
                             appState.selectedSection = .review
                         } label: {
                             Label("Review \(appState.reviewSubjectCount)", systemImage: HagoSection.review.symbolName)
                         }
                     }
-                    Button {
-                        appState.selectedSection = .activity
-                    } label: {
-                        Label("Activity", systemImage: HagoSection.activity.symbolName)
-                    }
                 }
             }
-            content
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if !appState.accessibilityTrusted {
+                        AccessibilityAccessPanel()
+                    }
+                    hero
+                    HStack(alignment: .top, spacing: 16) {
+                        TopItemsCard(kind: .work, summary: summary, timeline: appState.todayTimeline)
+                        TopItemsCard(kind: .personal, summary: summary, timeline: appState.todayTimeline)
+                    }
+                    if let week {
+                        WeekCard(week: week) { appState.selectedSection = .reports }
+                    }
+                }
+                .padding(20)
+            }
+        }
+        .task(id: "\(summary.date.timeIntervalSince1970)-\(Int(appState.todayTrackedSeconds / 300))") {
+            week = appState.loadReportPair(for: .week, containing: Date())?.current
         }
     }
 
-    private var content: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if !appState.accessibilityTrusted {
-                    AccessibilityAccessPanel()
-                }
-
-                HStack(spacing: 12) {
-                    MetricView(title: "Work", value: formatter.compactDuration(appState.todaySummary.workSeconds), color: ActivityKind.work.tint)
-                    MetricView(title: "Personal", value: formatter.compactDuration(appState.todaySummary.personalSeconds), color: ActivityKind.personal.tint)
-                    MetricView(title: ActivityKind.review.displayName, value: formatter.compactDuration(appState.todaySummary.reviewSeconds), color: ActivityKind.review.tint)
-                }
-
-                HStack(alignment: .top, spacing: 16) {
-                    SectionPanel(title: "Today’s Timeline") {
-                        DailyTimelineChart(day: appState.todaySummary.date, entries: appState.todayTimeline)
-                            .id(appState.todaySummary.date)
-                            .frame(height: 420)
+    private var hero: some View {
+        HStack(alignment: .center, spacing: 32) {
+            DayRing(day: day, spans: spans, now: Date(), lineWidth: 18, showsHours: true) { arc in
+                if let arc {
+                    ArcSummary(arc: arc, timeline: appState.todayTimeline)
+                } else {
+                    VStack(spacing: 2) {
+                        Text(formatter.compactDuration(appState.todayTrackedSeconds))
+                            .font(.hagoNumber(32))
+                        Text("tracked today")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
+                }
+            }
+            .frame(width: 260, height: 260)
 
-                    SectionPanel(title: "Top Apps & Sites") {
-                        VStack(alignment: .leading, spacing: 16) {
-                            ForEach([ActivityKind.work, .personal]) { kind in
-                                if kind == .personal {
-                                    Divider()
-                                }
-
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Text(kind.displayName)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(kind.tint)
-                                    BucketListView(buckets: appState.todaySummary.topApps.filter { $0.kind == kind })
-                                }
-                            }
+            VStack(alignment: .leading, spacing: 22) {
+                NowCard()
+                VStack(spacing: 16) {
+                    KindTotalRow(kind: .work, seconds: summary.workSeconds, total: appState.todayTrackedSeconds)
+                    KindTotalRow(kind: .personal, seconds: summary.personalSeconds, total: appState.todayTrackedSeconds)
+                    if summary.reviewSeconds > 0 {
+                        KindTotalRow(kind: .review, seconds: summary.reviewSeconds, total: appState.todayTrackedSeconds) {
+                            appState.selectedSection = .review
                         }
                     }
                 }
             }
-            .padding(20)
+            .frame(maxWidth: .infinity)
+        }
+        .hagoCard(padding: 24)
+    }
+}
+
+/// What the hovered block on the day ring was mostly spent on.
+private struct ArcSummary: View {
+    let arc: RingArc
+    let timeline: [ClassifiedSegment]
+
+    private var mainName: String? {
+        var durations: [String: TimeInterval] = [:]
+        for entry in timeline where entry.classification.kind == arc.kind
+            && entry.segment.endedAt > arc.startedAt && entry.segment.startedAt < arc.endedAt {
+            let snapshot = entry.segment.snapshot
+            durations[snapshot.host.isEmpty ? snapshot.appName : snapshot.host, default: 0] += entry.segment.duration
+        }
+        return durations.max { $0.value < $1.value }?.key
+    }
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(arc.kind.displayName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(arc.kind.tint)
+            if let mainName {
+                Text(mainName)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Text(HagoDuration.text(arc.trackedSeconds))
+                .font(.hagoNumber(22))
+            Text("\(arc.startedAt.formatted(date: .omitted, time: .shortened)) – \(arc.endedAt.formatted(date: .omitted, time: .shortened))")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .multilineTextAlignment(.center)
+    }
+}
+
+private struct NowCard: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if appState.isTrackingPaused {
+                Image(systemName: "pause.circle.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Tracking paused")
+                        .font(.headline)
+                    Text("Nothing is being recorded")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button("Resume") { appState.toggleTracking() }
+            } else if let snapshot = appState.currentSnapshot {
+                AppIconView(bundleIdentifier: snapshot.bundleIdentifier, host: snapshot.host, size: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 6))
+                            .foregroundStyle(kind?.tint ?? .secondary)
+                            .symbolEffect(.pulse)
+                        Text("Now")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        if let kind {
+                            Text("· \(kind.displayName)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(kind.tint)
+                        }
+                    }
+                    Text(snapshot.host.isEmpty ? snapshot.appName : snapshot.host)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+            } else {
+                Image(systemName: "hourglass")
+                    .foregroundStyle(.secondary)
+                Text("Waiting for your first activity")
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(12)
+        .background(HagoPalette.track.opacity(0.7), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var kind: ActivityKind? {
+        appState.currentClassification?.kind == .ignored ? nil : appState.currentClassification?.kind
+    }
+}
+
+private struct KindTotalRow: View {
+    let kind: ActivityKind
+    let seconds: TimeInterval
+    let total: TimeInterval
+    var review: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(kind == .review ? "Not filed yet" : kind.displayName)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                if let review {
+                    Button("Review", action: review)
+                        .buttonStyle(.link)
+                        .font(.callout)
+                }
+                Spacer()
+                Text(TimeFormatting().compactDuration(seconds))
+                    .font(.hagoNumber(24))
+                    .foregroundStyle(kind.tint)
+            }
+            ShareBar(fraction: total > 0 ? seconds / total : 0, color: kind.tint, height: 6)
         }
     }
+}
+
+private struct TopItemsCard: View {
+    let kind: ActivityKind
+    let summary: DaySummary
+    let timeline: [ClassifiedSegment]
+
+    private var buckets: [TimeBucket] {
+        Array(summary.topApps.filter { $0.kind == kind }.prefix(6))
+    }
+
+    /// Top-app buckets are named by site or app; recover what to draw an icon from.
+    private var iconSources: [String: (bundleIdentifier: String, host: String?)] {
+        var sources: [String: (bundleIdentifier: String, host: String?)] = [:]
+        for entry in timeline where entry.classification.kind == kind {
+            let snapshot = entry.segment.snapshot
+            sources[snapshot.appName] = sources[snapshot.appName] ?? (snapshot.bundleIdentifier, nil)
+            if !snapshot.host.isEmpty {
+                sources[snapshot.host] = sources[snapshot.host] ?? (snapshot.bundleIdentifier, snapshot.host)
+            }
+        }
+        return sources
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(kind == .work ? "Work went to" : "Personal went to")
+                    .font(.headline)
+                Spacer()
+            }
+
+            if buckets.isEmpty {
+                Text("Nothing yet today")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                let sources = iconSources
+                let longest = buckets.first?.seconds ?? 1
+                ForEach(buckets) { bucket in
+                    let source = sources[bucket.name]
+                    HStack(spacing: 10) {
+                        AppIconView(
+                            bundleIdentifier: source?.bundleIdentifier ?? "",
+                            host: source?.host ?? (bucket.name.contains(".") ? bucket.name : nil),
+                            size: 26
+                        )
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 8) {
+                                Text(bucket.name)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer(minLength: 4)
+                                Text(HagoDuration.text(bucket.seconds))
+                                    .font(.callout.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            ShareBar(fraction: bucket.seconds / max(longest, 1), color: kind.tint, height: 4)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .hagoCard()
+    }
+}
+
+private struct WeekCard: View {
+    let week: ReportSummary
+    let openReports: () -> Void
+
+    private let formatter = TimeFormatting()
+
+    private var scale: TimeInterval {
+        max(4 * 3_600, week.buckets.map(\.total).max() ?? 0)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("This Week")
+                    .font(.headline)
+                Text("\(formatter.compactDuration(week.totalSeconds)) tracked · \(formatter.compactDuration(week.workSeconds)) work")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Reports", action: openReports)
+                    .buttonStyle(.link)
+            }
+
+            HStack(alignment: .bottom, spacing: 12) {
+                ForEach(week.buckets) { bucket in
+                    WeekDayColumn(bucket: bucket, scale: scale)
+                }
+            }
+        }
+        .hagoCard()
+    }
+}
+
+private struct WeekDayColumn: View {
+    let bucket: ReportBucket
+    let scale: TimeInterval
+
+    private var isToday: Bool {
+        let now = Date()
+        return bucket.startDate <= now && now < bucket.endDate
+    }
+
+    var body: some View {
+        VStack(spacing: 7) {
+            Text(bucket.total > 0 ? HagoDuration.text(bucket.total) : " ")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+            GeometryReader { geometry in
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    segment(bucket.reviewSeconds, .review, height: geometry.size.height)
+                    segment(bucket.personalSeconds, .personal, height: geometry.size.height)
+                    segment(bucket.workSeconds, .work, height: geometry.size.height)
+                }
+                .frame(maxWidth: .infinity)
+                .background(HagoPalette.track)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .frame(maxWidth: 40)
+            .frame(height: 96)
+            Text(bucket.startDate.formatted(.dateTime.weekday(.abbreviated)))
+                .font(.caption.weight(isToday ? .bold : .regular))
+                .foregroundStyle(isToday ? AnyShapeStyle(HagoPalette.work) : AnyShapeStyle(.secondary))
+        }
+        .frame(maxWidth: .infinity)
+        .help(bucket.startDate.formatted(.dateTime.weekday(.wide).day().month()))
+    }
+
+    private func segment(_ seconds: TimeInterval, _ kind: ActivityKind, height: CGFloat) -> some View {
+        Rectangle()
+            .fill(kind.tint.gradient)
+            .frame(height: height * min(seconds / scale, 1))
+    }
+}
+
+private extension ReportBucket {
+    var total: TimeInterval { workSeconds + personalSeconds + reviewSeconds }
 }
 
 private struct ReviewEntry: Identifiable {
@@ -1575,283 +1906,6 @@ private enum ActivitySort: String, CaseIterable, Identifiable {
     }
 }
 
-private struct DailyTimelineChart: View {
-    var day: Date
-    var entries: [ClassifiedSegment]
-
-    @State private var selectedSpanID: UUID?
-    @State private var tooltipPosition: CGPoint?
-    @State private var zoomedInterval: DateInterval?
-    @State private var panStartInterval: DateInterval?
-    @State private var isPanning = false
-
-    private let formatter = TimeFormatting()
-    private let tooltipWidth: CGFloat = 240
-    private let barWidth: CGFloat = 120
-
-    private var spans: [ActivityTimelineSpan] {
-        ActivityAggregation.timelineSpans(from: entries)
-    }
-
-    private var selectedSpan: ActivityTimelineSpan? {
-        spans.first { $0.id == selectedSpanID }
-    }
-
-    private var dayInterval: DateInterval {
-        HagoCalendar.shared.dayInterval(containing: day)
-    }
-
-    private var visibleInterval: DateInterval {
-        zoomedInterval ?? TimelineViewport.defaultInterval(for: day, calendar: .current)
-    }
-
-    var body: some View {
-        Chart {
-            RectangleMark(
-                x: .value("Day", "Today"),
-                yStart: .value("Time", visibleInterval.start),
-                yEnd: .value("Time", visibleInterval.end),
-                width: .fixed(barWidth)
-            )
-            .foregroundStyle(Color.primary.opacity(0.05))
-            .accessibilityHidden(true)
-
-            ForEach(spans) { span in
-                RectangleMark(
-                    x: .value("Day", "Today"),
-                    yStart: .value("Time", span.startedAt),
-                    yEnd: .value("Time", span.endedAt),
-                    width: .fixed(barWidth)
-                )
-                .foregroundStyle(by: .value("Type", span.kind.displayName))
-                .accessibilityLabel(span.kind.displayName)
-                .accessibilityValue("\(span.startedAt.formatted(date: .omitted, time: .shortened)) – \(span.endedAt.formatted(date: .omitted, time: .shortened)), \(formatter.compactDuration(span.endedAt.timeIntervalSince(span.startedAt)))")
-            }
-
-            if let selectedSpan {
-                RuleMark(y: .value("Selected Block", selectedSpan.endedAt))
-                    .foregroundStyle(.secondary.opacity(0.45))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-            }
-        }
-        .chartForegroundStyleScale([
-            "Work": .blue,
-            "Personal": .green,
-            ActivityKind.review.displayName: .orange
-        ])
-        .chartLegend(position: .bottom, spacing: 16)
-        .chartXScale(domain: ["Today"])
-        .chartXAxis(.hidden)
-        .chartYScale(domain: visibleInterval.start...visibleInterval.end)
-        .chartPlotStyle { plot in
-            plot.clipped()
-        }
-        .chartYAxis {
-            AxisMarks(position: .leading, values: TimelineViewport.axisDates(in: visibleInterval, calendar: .current)) {
-                AxisGridLine()
-                AxisValueLabel(format: .dateTime.hour().minute())
-            }
-        }
-        .chartOverlay { proxy in
-            GeometryReader { geometry in
-                ZStack(alignment: .topLeading) {
-                    Rectangle()
-                        .fill(.clear)
-                        .contentShape(Rectangle())
-                        .onContinuousHover { phase in
-                            guard !isPanning else { return }
-                            switch phase {
-                            case .active(let location):
-                                updateSelection(at: location, proxy: proxy, geometry: geometry)
-                            case .ended:
-                                clearSelection()
-                            }
-                        }
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { value in
-                                    updatePan(value, proxy: proxy, geometry: geometry)
-                                }
-                                .onEnded { _ in
-                                    panStartInterval = nil
-                                    isPanning = false
-                                }
-                        )
-
-                    if let plotFrame = proxy.plotFrame {
-                        let plotAreaFrame = geometry[plotFrame]
-                        TimelineScrollZoomView { delta, location in
-                            guard !isPanning else { return }
-                            clearSelection()
-                            zoomedInterval = TimelineViewport.zoom(
-                                visibleInterval,
-                                by: exp(-Double(delta) * 0.01),
-                                around: Double(location.y / plotAreaFrame.height),
-                                within: dayInterval
-                            )
-                        }
-                        .frame(width: barWidth, height: plotAreaFrame.height)
-                        .position(x: plotAreaFrame.midX, y: plotAreaFrame.midY)
-                    }
-
-                    if entries.isEmpty {
-                        Text("No activity tracked today")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .allowsHitTesting(false)
-                    }
-
-                    if let selectedSpan, let tooltipPosition {
-                        TimelineBlockTooltip(span: selectedSpan)
-                            .frame(width: tooltipWidth)
-                            .offset(
-                                x: min(max(tooltipPosition.x - tooltipWidth / 2, 0), max(0, geometry.size.width - tooltipWidth)),
-                                y: max(0, tooltipPosition.y - 120)
-                            )
-                            .allowsHitTesting(false)
-                    }
-                }
-            }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if zoomedInterval != nil {
-                Button("Reset zoom") {
-                    zoomedInterval = nil
-                    clearSelection()
-                }
-                .font(.caption)
-                .buttonStyle(.link)
-            }
-        }
-    }
-
-    private func clearSelection() {
-        selectedSpanID = nil
-        tooltipPosition = nil
-    }
-
-    private func updatePan(_ value: DragGesture.Value, proxy: ChartProxy, geometry: GeometryProxy) {
-        guard let plotFrame = proxy.plotFrame else { return }
-        let plotAreaFrame = geometry[plotFrame]
-        guard plotAreaFrame.height > 0,
-              plotAreaFrame.contains(value.startLocation),
-              abs(value.startLocation.x - plotAreaFrame.midX) <= barWidth / 2 else {
-            clearSelection()
-            return
-        }
-
-        // Apply the full drag translation to the original range so successive updates do not compound the shift.
-        let initialInterval = panStartInterval ?? visibleInterval
-        if panStartInterval == nil {
-            panStartInterval = initialInterval
-        }
-
-        guard isPanning || abs(value.translation.height) >= 3 else {
-            updateSelection(at: value.location, proxy: proxy, geometry: geometry)
-            return
-        }
-
-        isPanning = true
-        clearSelection()
-        zoomedInterval = TimelineViewport.pan(
-            initialInterval,
-            by: -Double(value.translation.height / plotAreaFrame.height) * initialInterval.duration,
-            within: dayInterval
-        )
-    }
-
-    private func updateSelection(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
-        guard let plotFrame = proxy.plotFrame else {
-            clearSelection()
-            return
-        }
-
-        let plotAreaFrame = geometry[plotFrame]
-        guard plotAreaFrame.contains(location),
-              abs(location.x - plotAreaFrame.midX) <= barWidth / 2,
-              let time = proxy.value(atY: location.y - plotAreaFrame.minY, as: Date.self),
-              let span = spans.first(where: { $0.startedAt <= time && time < $0.endedAt }) else {
-            clearSelection()
-            return
-        }
-
-        selectedSpanID = span.id
-        tooltipPosition = location
-    }
-}
-
-private struct TimelineBlockTooltip: View {
-    var span: ActivityTimelineSpan
-
-    private let formatter = TimeFormatting()
-
-    private var duration: TimeInterval {
-        span.endedAt.timeIntervalSince(span.startedAt)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("\(span.kind.displayName) block")
-                .font(.caption.weight(.semibold))
-            Divider()
-            Text("\(span.startedAt.formatted(date: .omitted, time: .standard)) – \(span.endedAt.formatted(date: .omitted, time: .standard))")
-                .monospacedDigit()
-            Text(duration < 60
-                 ? "\(Int(duration))s"
-                 : formatter.compactDuration(duration))
-                .monospacedDigit()
-        }
-        .font(.caption)
-        .padding(8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .shadow(radius: 4)
-    }
-}
-
-struct BucketListView: View {
-    var buckets: [TimeBucket]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if buckets.isEmpty {
-                Text("No data yet")
-                    .foregroundStyle(.secondary)
-            }
-
-            ForEach(buckets) { bucket in
-                HStack {
-                    Text(bucket.name)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(TimeFormatting().compactDuration(bucket.seconds))
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-}
-
-private struct MetricView: View {
-    var title: String
-    var value: String
-    var color: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(size: 32, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(color)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-}
-
 struct SectionPanel<Content: View>: View {
     var title: String
     @ViewBuilder var content: Content
@@ -1863,7 +1917,6 @@ struct SectionPanel<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .padding(18)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .hagoCard()
     }
 }

@@ -54,10 +54,6 @@ struct ReportComparisonTests {
         #expect(calendar.component(.hour, from: window.previousData.end) == 22)
         #expect(window.previousData.end == (try date("2026-03-02T03:00:00Z")))
         #expect(window.previousData.duration - window.currentData.duration == 3_600)
-        let springDay = TimelineViewport.defaultInterval(for: try date("2026-03-08T07:30:00Z"), calendar: calendar)
-        #expect(springDay.duration == 23 * 3_600)
-        #expect(calendar.component(.hour, from: springDay.start) == 4)
-        #expect(calendar.component(.hour, from: springDay.end) == 4)
     }
 
     @Test

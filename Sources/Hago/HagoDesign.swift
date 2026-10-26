@@ -1,12 +1,43 @@
+import AppKit
 import SwiftUI
 import HagoCore
+
+enum HagoPalette {
+    /// The blue of the app icon.
+    static let work = Color(light: 0x2B7BF3, dark: 0x4A93FF)
+    static let personal = Color(light: 0x12A37E, dark: 0x3CD3A3)
+    static let review = Color(light: 0xE58A0B, dark: 0xFFB43F)
+    static let track = Color.primary.opacity(0.07)
+}
+
+extension Color {
+    init(light: UInt32, dark: UInt32) {
+        func color(_ hex: UInt32) -> NSColor {
+            NSColor(
+                srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                green: CGFloat((hex >> 8) & 0xFF) / 255,
+                blue: CGFloat(hex & 0xFF) / 255,
+                alpha: 1
+            )
+        }
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? color(dark) : color(light)
+        })
+    }
+}
+
+extension Font {
+    static func hagoNumber(_ size: CGFloat) -> Font {
+        .system(size: size, weight: .semibold, design: .rounded).monospacedDigit()
+    }
+}
 
 extension ActivityKind {
     var tint: Color {
         switch self {
-        case .work: .blue
-        case .personal: .green
-        case .review: .orange
+        case .work: HagoPalette.work
+        case .personal: HagoPalette.personal
+        case .review: HagoPalette.review
         case .ignored: .gray
         }
     }
@@ -51,7 +82,7 @@ struct PageHeader<Trailing: View>: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.title2.weight(.semibold))
+                    .font(.system(.title2, design: .rounded).weight(.bold))
                     .lineLimit(1)
                 if let subtitle {
                     Text(subtitle)
@@ -249,7 +280,73 @@ struct CorrectionBanner: View {
     }
 }
 
+struct HagoCard: ViewModifier {
+    var padding: CGFloat = 18
+
+    func body(content: Content) -> some View {
+        content
+            .padding(padding)
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
+    }
+}
+
+struct StatCard: View {
+    var title: String
+    var value: String
+    var detail: String?
+    var color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 7, height: 7)
+                Text(title)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Text(value)
+                .font(.hagoNumber(28))
+                .foregroundStyle(color == .primary ? AnyShapeStyle(.primary) : AnyShapeStyle(color))
+            if let detail {
+                Text(detail)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(HagoCard())
+    }
+}
+
+/// A thin capsule filled to `fraction`, used to compare durations at a glance.
+struct ShareBar: View {
+    var fraction: Double
+    var color: Color
+    var height: CGFloat = 5
+
+    var body: some View {
+        GeometryReader { geometry in
+            Capsule()
+                .fill(HagoPalette.track)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(color.gradient)
+                        .frame(width: max(height, geometry.size.width * min(max(fraction, 0), 1)))
+                        .opacity(fraction > 0 ? 1 : 0)
+                }
+        }
+        .frame(height: height)
+    }
+}
+
 extension View {
+    func hagoCard(padding: CGFloat = 18) -> some View {
+        modifier(HagoCard(padding: padding))
+    }
+
     func hagoRowBackground(isSelected: Bool, isHovered: Bool = false) -> some View {
         listRowBackground(
             RoundedRectangle(cornerRadius: 8)
