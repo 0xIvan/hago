@@ -128,6 +128,27 @@ struct RecordingIntegrityTests {
         #expect(try store.recentSegments(limit: 10).count == 1)
     }
 
+    @Test func dailyBackupsReopenWithHistoryAndKeepOnlyTheNewest() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("hago-backups-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("hago.sqlite")
+        let store = try HagoStore(databaseURL: url)
+        let interval = ActivitySegment(startedAt: base, endedAt: base.addingTimeInterval(60), snapshot: snapshot)
+        try store.checkpoint(segment: interval, classification: classification(interval))
+
+        let backups = DatabaseBackups(databaseURL: url, keeping: 2)
+        let first = try #require(try backups.backUpIfNeeded(now: base))
+        #expect(try backups.backUpIfNeeded(now: base.addingTimeInterval(3_600)) == nil)
+        #expect(try HagoStore(databaseURL: first).recentSegments(limit: 10).map(\.segment.id) == [interval.id])
+
+        for day in 1...3 {
+            try backups.backUpIfNeeded(now: base.addingTimeInterval(Double(day) * 86_400))
+        }
+        #expect(backups.existing().count == 2)
+        #expect(!FileManager.default.fileExists(atPath: first.path))
+    }
+
     @Test func reportEndLabelsUseTrackingDaysAcrossDSTAndYearBoundary() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "Europe/Berlin"))

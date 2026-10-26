@@ -50,6 +50,11 @@ let review = try store.reviewSegments()
 try measure("review.groups") { _ = ActivityAggregation.groups(from: review) }
 try measure("reports.week", runs: 3) { _ = try store.reportComparison(for: .week, containing: now, now: now) }
 try measure("reports.month", runs: 3) { _ = try store.reportComparison(for: .month, containing: now, now: now) }
+var backupDay = 0
+try measure("daily.backup", runs: 3) {
+    backupDay += 1
+    try DatabaseBackups(databaseURL: databaseURL).backUpIfNeeded(now: now.addingTimeInterval(Double(backupDay) * 86_400 * 400))
+}
 print("TOTAL".padding(toLength: 30, withPad: " ", startingAt: 0) + String(format: "%9.2f ms", results.map(\.1).reduce(0, +)))
 
 func generate(at url: URL, count: Int) throws {

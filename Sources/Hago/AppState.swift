@@ -62,6 +62,8 @@ final class AppState: ObservableObject {
     private var reviewAIAnalysisService: ReviewAIAnalysisService?
     private var activeReviewIsScheduled = false
     private var timer: Timer?
+    private var backups: DatabaseBackups?
+    private var backedUpDay: Date?
     private var captureTask: Task<Void, Never>?
     private var captureRevision = 0
     @Published var captureCapabilityLabel = "Checking capture capabilities"
@@ -94,8 +96,10 @@ final class AppState: ObservableObject {
 
         let store: HagoStore
         do {
-            store = try HagoStore(databaseURL: HagoStore.defaultDatabaseURL())
+            let databaseURL = try HagoStore.defaultDatabaseURL()
+            store = try HagoStore(databaseURL: databaseURL)
             self.store = store
+            backups = DatabaseBackups(databaseURL: databaseURL)
             if let last = try store.recentSegments(limit: 1).first {
                 recorder = ActivityRecorder(notBefore: last.segment.endedAt)
             }
@@ -1117,6 +1121,19 @@ final class AppState: ObservableObject {
         tick()
     }
 
+    private func backUpOncePerDay(now: Date) {
+        let day = HagoCalendar.shared.dayInterval(containing: now).start
+        guard let backups, backedUpDay != day else { return }
+        backedUpDay = day
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                try backups.backUpIfNeeded(now: now)
+            } catch {
+                NSLog("Hago backup failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func startTracking() {
         timer?.invalidate()
         let timer = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
@@ -1132,6 +1149,7 @@ final class AppState: ObservableObject {
         refreshAccessibilityTrust()
         refreshLoginItemStatus()
         let now = Date()
+        backUpOncePerDay(now: now)
         if isTrackingPaused || !suspensionReasons.isEmpty {
             captureRevision += 1
             captureTask?.cancel()
