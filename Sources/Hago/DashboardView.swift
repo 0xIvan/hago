@@ -741,14 +741,24 @@ private struct ReviewTab: View {
         }
     }
 
-    /// Choosing what AI picked accepts its rule; any other choice only files these recordings.
+    /// Choosing what AI picked accepts its rule. Work or Personal on a whole site or app remembers it,
+    /// so it never comes back to Review; a single page or window only files those recordings.
     private func decide(_ row: ReviewRow, as kind: ActivityKind, in rows: [ReviewRow]) {
         if let pick = row.pick, ReviewSuggestionChoice.kind(pick) == kind {
             accept(pick, for: row, in: rows)
             return
         }
         selectNext(after: row, removing: decided(by: row), in: rows)
-        appState.classifyReview(segmentIDs: row.segmentIDs, as: kind)
+        if let rule = rememberedRule(for: row, as: kind) {
+            appState.rememberRule(rule)
+        } else {
+            appState.classifyReview(segmentIDs: row.segmentIDs, as: kind)
+        }
+    }
+
+    private func rememberedRule(for row: ReviewRow, as kind: ActivityKind) -> Rule? {
+        guard !row.isPage else { return nil }
+        return rememberOptions(for: row).last { $0.action.kind == kind }
     }
 
     private func accept(_ suggestion: ReviewAISuggestion, for row: ReviewRow, in rows: [ReviewRow]) {
@@ -1073,7 +1083,9 @@ private struct ReviewGroupRow: View {
                     pickButton(kind)
                 } else {
                     Button(kind.displayName) { decide(kind) }
-                        .help("File these recordings as \(kind.displayName)")
+                        .help(row.isPage || rememberOptions.isEmpty
+                              ? "File these recordings as \(kind.displayName)"
+                              : "Always file \(title) as \(kind.displayName), including past recordings")
                 }
             }
 

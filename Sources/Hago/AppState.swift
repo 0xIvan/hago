@@ -953,7 +953,7 @@ final class AppState: ObservableObject {
         guard flushTracking() else { return }
         do {
             _ = try store?.applyRememberedRule(rule)
-            correctionMessage = "Rule remembered. Existing explicit corrections and project assignments were preserved."
+            correctionMessage = "\(summary(for: rule)) is now always \(rule.action.kind.displayName), past recordings included."
             try refresh()
             clearReviewAISuggestions()
             errorMessage = nil
