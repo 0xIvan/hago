@@ -6,7 +6,9 @@ import ServiceManagement
 
 @MainActor
 final class AppState: ObservableObject {
-    let workProfileStore = WorkProfileStore()
+    /// `--demo` opens a separate, seeded database so Hago can be shown without anyone's real history.
+    static let isDemo = CommandLine.arguments.contains("--demo")
+    let workProfileStore = WorkProfileStore(defaults: AppState.isDemo ? UserDefaults(suiteName: "com.ivan.hago.demo") ?? .standard : .standard)
     let updater = AppUpdater()
     @Published var currentSnapshot: ActivitySnapshot?
     @Published var currentClassification: ClassificationResult?
@@ -101,10 +103,14 @@ final class AppState: ObservableObject {
 
         let store: HagoStore
         do {
-            let databaseURL = try HagoStore.defaultDatabaseURL()
-            store = try HagoStore(databaseURL: databaseURL)
+            if Self.isDemo {
+                store = try Self.openDemoStore()
+            } else {
+                let databaseURL = try HagoStore.defaultDatabaseURL()
+                store = try HagoStore(databaseURL: databaseURL)
+                backups = DatabaseBackups(databaseURL: databaseURL)
+            }
             self.store = store
-            backups = DatabaseBackups(databaseURL: databaseURL)
             if let last = try store.recentSegments(limit: 1).first {
                 recorder = ActivityRecorder(notBefore: last.segment.endedAt)
             }
@@ -130,6 +136,18 @@ final class AppState: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.hideFromDockIfNoWindowsAreOpen()
         }
+    }
+
+    private static func openDemoStore() throws -> HagoStore {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Hago Demo", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("hago.sqlite")
+        // Rebuilt on every demo launch so its two weeks always end today.
+        try? FileManager.default.removeItem(at: url)
+        let store = try HagoStore(databaseURL: url)
+        try DemoHistory.seed(into: store, endingAt: Date())
+        return store
     }
 
     private func restoreReviewAISchedule(store: HagoStore) throws {

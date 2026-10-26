@@ -7,7 +7,8 @@ Hago is a local macOS menu bar app for tracking active-window time and reviewing
 - frontmost app name
 - active window title
 - Chrome active tab URL and title when Apple Events permission is granted
-- reading and watching time, even without keyboard or mouse input
+- other browsers (Safari, Arc, Firefox and so on) as app time only, with no
+  titles or addresses, because their private windows can't be detected
 
 Recording checkpoints are saved every five seconds while tracking. Quitting
 normally flushes the current interval. Sleep, display sleep, screen lock,
@@ -15,10 +16,12 @@ switching away from the user session, and explicit pause stop recording. Long
 observation gaps are not counted as continuous activity. After a restart, Hago
 starts a new interval rather than extending the previous one across downtime.
 
-An unattended Mac that stays awake and unlocked can continue recording. In
-**Activity → Individual**, use an activity's clock button (**Edit Time**)
-to remove an entire interval, trim an edge, or remove a middle range. The
-remaining time retains its classification. Time removal is permanent.
+After 10 minutes without keyboard or mouse input (changeable under **Stop
+counting when I'm away**), Hago treats you as away and ends the recording at
+your last input. Video playback and calls keep the Mac awake, so they still
+count. In **Activity → Individual**, use an activity's clock button (**Edit
+Time**) to remove an entire interval, trim an edge, or remove a middle range.
+The remaining time keeps its classification. Time removal is permanent.
 
 Use **Pause Tracking** in the menu bar panel or **Privacy → Tracking**. The same
 settings panel offers **Open at Login**, which is off unless the user enables
@@ -39,6 +42,18 @@ Review activity to the AI service configured in a local CLI, but only after the
 user selects that CLI and confirms the disclosure in the app.
 
 Ignored activity is not persisted as detailed activity rows.
+
+A consistent copy of the database is written once a day to `Backups/` beside it,
+and the newest three are kept. **Privacy → Your data** exports every recording
+as CSV, shows the database in Finder, and deletes all recorded time while
+keeping rules and settings.
+
+## Demo
+
+`scripts/demo.sh` quits Hago and reopens it with `--demo`, on a separate
+database (`~/Library/Application Support/Hago Demo/`) seeded with two weeks of
+sample days. The real history is not touched. Quit and reopen Hago normally to
+return to it.
 
 ## AI Review
 
