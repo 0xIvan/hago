@@ -753,6 +753,42 @@ public final class HagoStore {
         return count
     }
 
+    /// Files sign-in pages waiting in Review like the Work or Personal activity right before
+    /// (or else right after) them. Pages with no such neighbour within five minutes stay in Review.
+    @discardableResult
+    public func fileSignInPagesInReview() throws -> Int {
+        let entries = try reviewSegments().filter { !$0.classification.isManual && $0.segment.snapshot.isSignInPage }
+        guard !entries.isEmpty else { return 0 }
+        let reach: TimeInterval = 300
+        var count = 0
+        try transaction {
+            for entry in entries {
+                let segment = entry.segment
+                let nearby = try classifiedSegments(
+                    startingAt: segment.startedAt.addingTimeInterval(-reach),
+                    endingBefore: segment.endedAt.addingTimeInterval(reach),
+                    includingOverlaps: true
+                ).filter { $0.id != entry.id && ($0.classification.kind == .work || $0.classification.kind == .personal) }
+                let before = nearby.filter { $0.segment.endedAt <= segment.startedAt.addingTimeInterval(1) }.last
+                let after = nearby.first { $0.segment.startedAt >= segment.endedAt.addingTimeInterval(-1) }
+                guard let neighbor = before ?? after else { continue }
+                try saveClassification(
+                    SegmentClassification(
+                        segmentID: entry.id,
+                        kind: neighbor.classification.kind,
+                        categoryID: neighbor.classification.categoryID,
+                        projectID: neighbor.classification.projectID,
+                        ruleID: nil,
+                        isManual: false
+                    ),
+                    reason: "Sign-in page, counted with the activity around it"
+                )
+                count += 1
+            }
+        }
+        return count
+    }
+
     public func processReviewAISuggestions(
         _ suggestions: [ReviewAISuggestion],
         harness: ReviewAIHarnessKind,

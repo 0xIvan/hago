@@ -688,7 +688,7 @@ private struct ReviewGroupRow: View {
                 .disabled(isExpanded == nil)
                 .accessibilityLabel(isExpanded == true ? "Hide \(isWebsite ? "pages" : "windows")" : "Show \(isWebsite ? "pages" : "windows")")
 
-                AppIconView(bundleIdentifier: segment.snapshot.bundleIdentifier, size: 30)
+                AppIconView(bundleIdentifier: segment.snapshot.bundleIdentifier, host: segment.snapshot.host, size: 30)
             }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -1171,7 +1171,7 @@ private struct RecentActivityTab: View {
     private func groupRow(_ group: AggregatedActivity, sample: ClassifiedSegment?, longest: TimeInterval) -> some View {
         let isHovered = hoveredID == group.id
         return HStack(spacing: 12) {
-            AppIconView(bundleIdentifier: sample?.segment.snapshot.bundleIdentifier ?? "", size: 28)
+            AppIconView(bundleIdentifier: sample?.segment.snapshot.bundleIdentifier ?? "", host: sample?.segment.snapshot.host, size: 28)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
@@ -1240,7 +1240,7 @@ private struct RecentActivityTab: View {
             }
             .frame(width: 64, alignment: .trailing)
 
-            AppIconView(bundleIdentifier: segment.snapshot.bundleIdentifier, size: 24)
+            AppIconView(bundleIdentifier: segment.snapshot.bundleIdentifier, host: segment.snapshot.host, size: 24)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
@@ -1438,7 +1438,7 @@ private struct ActivityRuleInspectorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                AppIconView(bundleIdentifier: inspection.sample.segment.snapshot.bundleIdentifier, size: 36)
+                AppIconView(bundleIdentifier: inspection.sample.segment.snapshot.bundleIdentifier, host: inspection.sample.segment.snapshot.host, size: 36)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(inspection.title)
                         .font(.title3.weight(.semibold))

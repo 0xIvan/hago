@@ -472,6 +472,9 @@ struct RuleScopeIcon: View {
         Group {
             if let scope = RuleScope(conditions: rule.conditions), scope.target == .app {
                 AppIconView(bundleIdentifier: scope.normalizedValue, size: 24)
+            } else if let scope = RuleScope(conditions: rule.conditions), scope.target == .website || scope.target == .page {
+                let host = scope.target == .website ? scope.normalizedValue : URL(string: scope.normalizedValue)?.host
+                AppIconView(bundleIdentifier: "", host: host, size: 24, placeholderSymbol: scope.target.symbolName)
             } else {
                 Image(systemName: (RuleScope(conditions: rule.conditions)?.target.symbolName) ?? "slider.horizontal.3")
                     .font(.title3)

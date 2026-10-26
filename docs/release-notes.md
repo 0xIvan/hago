@@ -1,4 +1,5 @@
-- AI's pick button in Review now uses the colour of its choice: blue for Work, green for Personal, gray for Ignore. The sparkle icon is white so it stays readable.
+- Sign-in pages no longer need a decision. Pages like accounts.google.com, Apple ID sign-in, Microsoft and Okta logins, or any /login page count toward what you were doing around them. Sign-in pages already waiting in Review are filed the same way.
+- Websites show their own icon in Review, Activity and Rules instead of the Chrome icon. Icons come from Chrome's favicon cache on your Mac, so nothing is fetched from the internet.
 
 Download the universal DMG, open it and drag Hago to Applications. The app and DMG are Developer ID signed and notarized. Requires macOS 14 or newer; supports Apple Silicon and Intel.
 

@@ -359,6 +359,9 @@ final class AppState: ObservableObject {
         let now = Date()
         todaySummary = try store.daySummary(for: now)
         todayTimeline = try store.dayTimeline(for: now)
+        if reviewSegments.isEmpty || reviewSegments.contains(where: { !$0.classification.isManual && $0.segment.snapshot.isSignInPage }) {
+            try store.fileSignInPagesInReview()
+        }
         reviewSegments = try store.reviewSegments()
         // A recommendation-only background run must not hide the latest View Applied / Undo controls.
         lastReviewAIRunSummary = try store.mostRecentReviewAIRun(appliedRulesOnly: true) ?? store.mostRecentReviewAIRun()
@@ -1126,7 +1129,11 @@ final class AppState: ObservableObject {
 
     private func recordObservation(_ snapshot: ActivitySnapshot?) {
         let classification = snapshot.map { classifier.classify(snapshot: $0, preparedRules: preparedRules) }
-        let retained = classification?.kind == .ignored ? nil : snapshot
+        var retained = classification?.kind == .ignored ? nil : snapshot
+        if classification?.kind == .review, snapshot?.isSignInPage == true {
+            // Time on a sign-in page counts toward what you were doing before it.
+            retained = recorder.current?.snapshot
+        }
         let contextChanged = recorder.current?.snapshot.normalizedSignature != retained?.normalizedSignature
         currentSnapshot = retained
         currentClassification = classification
