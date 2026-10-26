@@ -767,8 +767,20 @@ struct AccessibilityAccessPanel: View {
 }
 
 struct PrivacySettingsView: View {
+    private func exportCSV() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "Hago \(Date().formatted(.iso8601.year().month().day())).csv"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if let count = appState.exportActivity(to: url) {
+            exportMessage = "Exported \(count) recording\(count == 1 ? "" : "s") to \(url.lastPathComponent)."
+        }
+    }
+
     @EnvironmentObject private var appState: AppState
     @State private var editingRule: Rule?
+    @State private var confirmsDeleteAll = false
+    @State private var exportMessage: String?
 
     private var ignoreRules: [Rule] {
         appState.rules
@@ -805,7 +817,7 @@ struct PrivacySettingsView: View {
 
             Section("Always private") {
                 Label("Incognito and private browser windows are never recorded.", systemImage: "eye.slash")
-                Label("Chrome windows are checked before recording. Safari and other browsers are skipped until private windows can be detected.", systemImage: "safari")
+                Label("Chrome windows are checked before recording. Safari and other browsers count as app time only, never sites or titles.", systemImage: "safari")
                 Label("Everything stays on this Mac. AI suggestions only send data when you connect a provider.", systemImage: "lock")
             }
 
@@ -843,8 +855,41 @@ struct PrivacySettingsView: View {
             } footer: {
                 Text("Matching activity is never saved and wins over every other rule.")
             }
+
+            Section {
+                LabeledContent {
+                    Button("Export CSV…", action: exportCSV)
+                } label: {
+                    Text("Export")
+                    Text(exportMessage ?? "Every recording with its time, kind, project, app, title and address.")
+                }
+                if let backups = appState.backups {
+                    LabeledContent {
+                        Button("Show in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([backups.databaseURL])
+                        }
+                    } label: {
+                        Text("Database and backups")
+                        Text("A copy is kept each day for the last \(backups.keeping) days in the Backups folder beside the database.")
+                    }
+                }
+                LabeledContent {
+                    Button("Delete All…", role: .destructive) { confirmsDeleteAll = true }
+                } label: {
+                    Text("Delete recorded time")
+                    Text("Rules, projects and settings stay.")
+                }
+            } header: {
+                Text("Your data")
+            }
         }
         .formStyle(.grouped)
+        .confirmationDialog("Delete all recorded time?", isPresented: $confirmsDeleteAll) {
+            Button("Delete All Recorded Time", role: .destructive) { appState.deleteAllActivity() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every recording on this Mac is removed and can't be undone. Daily backups in the Backups folder are kept until you delete them.")
+        }
         .sheet(item: $editingRule) { rule in
             RuleEditorView(
                 rule: rule,

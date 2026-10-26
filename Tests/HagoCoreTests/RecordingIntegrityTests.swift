@@ -153,6 +153,28 @@ struct RecordingIntegrityTests {
         #expect(saved.last?.startedAt == base.addingTimeInterval(900))
     }
 
+    @Test func exportWritesEveryRecordingAndDeleteAllKeepsRules() throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = try HagoStore(databaseURL: url)
+        let titled = ActivitySnapshot(appName: "Reader", bundleIdentifier: "example.reader", processIdentifier: 12,
+                                      windowTitle: "=SUM(A1), \"draft\"", url: nil, source: .macOS)
+        let interval = ActivitySegment(startedAt: base, endedAt: base.addingTimeInterval(90), snapshot: titled)
+        try store.checkpoint(segment: interval, classification: classification(interval))
+        let rulesBefore = try store.loadRules().count
+
+        let csv = url.deletingPathExtension().appendingPathExtension("csv")
+        defer { try? FileManager.default.removeItem(at: csv) }
+        #expect(try store.exportActivityCSV(to: csv) == 1)
+        let lines = try String(contentsOf: csv, encoding: .utf8).components(separatedBy: "\r\n")
+        #expect(lines[1].contains(",90,personal,"))
+        #expect(lines[1].contains("\"'=SUM(A1), \"\"draft\"\"\""))
+
+        try store.deleteAllActivity()
+        #expect(try store.recentSegments(limit: 10).isEmpty)
+        #expect(try store.loadRules().count == rulesBefore)
+    }
+
     @Test func dailyBackupsReopenWithHistoryAndKeepOnlyTheNewest() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("hago-backups-\(UUID())", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -2662,6 +2662,45 @@ extension HagoStore {
         }
     }
 
+    struct ExportRow {
+        var startedAt: Date, endedAt: Date, kind: String, category: String, project: String
+        var app: String, bundleID: String, title: String, url: String
+    }
+
+    func exportRows() throws -> [ExportRow] {
+        try query(
+            """
+            SELECT s.started_at, s.ended_at, c.kind, coalesce(cat.name, ''), coalesce(p.name, ''),
+                   s.app_name, s.bundle_id, s.window_title, coalesce(s.url, '')
+            FROM activity_segments s
+            JOIN classifications c ON c.segment_id = s.id
+            LEFT JOIN categories cat ON cat.id = c.category_id
+            LEFT JOIN projects p ON p.id = c.project_id
+            ORDER BY s.started_at
+            """
+        ) { statement in
+            ExportRow(
+                startedAt: Date(timeIntervalSince1970: doubleColumn(statement, 0)),
+                endedAt: Date(timeIntervalSince1970: doubleColumn(statement, 1)),
+                kind: stringColumn(statement, 2), category: stringColumn(statement, 3), project: stringColumn(statement, 4),
+                app: stringColumn(statement, 5), bundleID: stringColumn(statement, 6),
+                title: stringColumn(statement, 7), url: stringColumn(statement, 8)
+            )
+        }
+    }
+
+    /// Removes every recording and what was learned from individual choices. Rules, projects,
+    /// categories and settings stay, so tracking carries on as configured.
+    public func deleteAllActivity() throws {
+        try transaction {
+            try execute("DELETE FROM correction_actions")
+            try execute("DELETE FROM activity_segments")
+            try execute("DELETE FROM review_ai_cache")
+        }
+        longestSegmentDuration = 0
+        try execute("VACUUM")
+    }
+
     public func enabledPresetIDs() throws -> Set<String> {
         Set(try query("SELECT pack_id FROM preset_selections") { stringColumn($0, 0) })
     }

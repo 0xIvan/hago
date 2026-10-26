@@ -62,7 +62,7 @@ final class AppState: ObservableObject {
     private var reviewAIAnalysisService: ReviewAIAnalysisService?
     private var activeReviewIsScheduled = false
     private var timer: Timer?
-    private var backups: DatabaseBackups?
+    private(set) var backups: DatabaseBackups?
     private var backedUpDay: Date?
     private var captureTask: Task<Void, Never>?
     private var captureRevision = 0
@@ -882,6 +882,32 @@ final class AppState: ObservableObject {
                 ? "Removed \(segmentIDs.count) recording\(segmentIDs.count == 1 ? "" : "s") permanently."
                 : "Marked \(segmentIDs.count) recording\(segmentIDs.count == 1 ? "" : "s") as \(kind.displayName)."
 
+            try refresh()
+            clearReviewAISuggestions()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func exportActivity(to destination: URL) -> Int? {
+        guard flushTracking(), let store else { return nil }
+        do {
+            return try store.exportActivityCSV(to: destination)
+        } catch {
+            errorMessage = "Export failed: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    func deleteAllActivity() {
+        guard flushTracking(), let store else { return }
+        do {
+            try store.deleteAllActivity()
+            recorder = ActivityRecorder()
+            pendingCheckpoints.removeAll()
+            correctionMessage = nil
             try refresh()
             clearReviewAISuggestions()
             errorMessage = nil
