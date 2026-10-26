@@ -646,6 +646,7 @@ struct HagoStoreTests {
         try store.checkpoint(segment: long, classification: longWork)
 
         #expect(try store.daySummary(for: middayToday()).workSeconds == 120 + 1_800)
+        #expect(try store.activitySegments(for: middayToday()).contains { $0.id == long.id })
     }
 
     @Test

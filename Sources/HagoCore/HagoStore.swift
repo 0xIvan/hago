@@ -1476,7 +1476,7 @@ public final class HagoStore {
     public func activitySegments(for date: Date) throws -> [ClassifiedSegment] {
         let interval = dayInterval(for: date)
 
-        return try classifiedSegments(startingAt: interval.start, endingBefore: interval.end, includingOverlaps: false)
+        return try classifiedSegments(startingAt: interval.start, endingBefore: interval.end, includingOverlaps: true)
             .sorted { first, second in
                 first.segment.startedAt > second.segment.startedAt
             }

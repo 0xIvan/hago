@@ -1466,8 +1466,14 @@ private struct RecentActivityTab: View {
         }
     }
 
+    /// A recording that runs past 4am is listed on both days, so totals count only this day's part.
+    private func secondsInDay(_ item: ClassifiedSegment) -> TimeInterval {
+        let day = calendar.dayInterval(containing: appState.activityDate)
+        return max(0, min(item.segment.endedAt, day.end).timeIntervalSince(max(item.segment.startedAt, day.start)))
+    }
+
     private var daySubtitle: String {
-        let total = appState.activitySegments.reduce(0) { $0 + $1.segment.duration }
+        let total = appState.activitySegments.reduce(0) { $0 + secondsInDay($1) }
         let count = appState.activitySegments.count
         guard count > 0 else { return dayStart.formatted(date: .complete, time: .omitted) }
         return "\(HagoDuration.text(total)) tracked · \(count) recording\(count == 1 ? "" : "s")"
@@ -1475,7 +1481,7 @@ private struct RecentActivityTab: View {
 
     private func kindChips(_ segments: [ClassifiedSegment]) -> some View {
         let totals = Dictionary(grouping: segments, by: \.classification.kind)
-            .mapValues { $0.reduce(0) { $0 + $1.segment.duration } }
+            .mapValues { $0.reduce(0) { $0 + secondsInDay($1) } }
         let kinds = [ActivityKind.work, .personal, .review].filter { totals[$0, default: 0] > 0 || kindFilter == $0 }
 
         return HStack(spacing: 8) {
