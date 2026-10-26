@@ -496,6 +496,11 @@ private enum ReviewAIState {
 }
 
 /// A selectable Review row: a whole website or app, or one of its pages when expanded.
+private struct PendingReviewIgnore {
+    let row: ReviewRow
+    let rows: [ReviewRow]
+}
+
 private struct ReviewRow: Identifiable {
     let id: String
     let subjectID: String
@@ -547,6 +552,7 @@ private struct ReviewTab: View {
     @State private var hoveredRowID: String?
     @State private var expandedSubjectIDs: Set<String> = []
     @State private var confirmsBulkAccept = false
+    @State private var pendingIgnore: PendingReviewIgnore?
     @FocusState private var listHasKeyboardFocus: Bool
 
     private var aiEnabled: Bool {
@@ -717,6 +723,16 @@ private struct ReviewTab: View {
         } message: {
             Text("Each pick becomes a Work or Personal rule, so these sites and apps are filed automatically from now on, including their past recordings. You can change them in Rules.")
         }
+        .confirmationDialog(
+            "Delete \(pendingIgnore?.row.segmentCount ?? 0) recording\(pendingIgnore?.row.segmentCount == 1 ? "" : "s")?",
+            isPresented: Binding(get: { pendingIgnore != nil }, set: { if !$0 { pendingIgnore = nil } }),
+            presenting: pendingIgnore
+        ) { ignore in
+            Button("Delete", role: .destructive) { file(ignore.row, as: .ignored, in: ignore.rows) }
+            Button("Cancel", role: .cancel) {}
+        } message: { ignore in
+            Text("\(HagoDuration.text(ignore.row.duration)) will be removed permanently and can't be undone. To stop recording it in future, add it to Privacy → Never record.")
+        }
     }
 
     private func selectedID(in rows: [ReviewRow]) -> String? {
@@ -748,6 +764,14 @@ private struct ReviewTab: View {
             accept(pick, for: row, in: rows)
             return
         }
+        if kind == .ignored {
+            pendingIgnore = PendingReviewIgnore(row: row, rows: rows)
+            return
+        }
+        file(row, as: kind, in: rows)
+    }
+
+    private func file(_ row: ReviewRow, as kind: ActivityKind, in rows: [ReviewRow]) {
         selectNext(after: row, removing: decided(by: row), in: rows)
         if let rule = rememberedRule(for: row, as: kind) {
             appState.rememberRule(rule)

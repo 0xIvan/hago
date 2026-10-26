@@ -148,6 +148,20 @@ struct ClassificationLearningIntegrityTests {
         #expect(ActivityClassifier().classify(snapshot: security, rules: []).kind == .ignored)
     }
 
+    @Test
+    func undoAfterIgnoringNeverRevertsAnEarlierChoice() throws {
+        let store = try HagoStore(databaseURL: try databaseURL())
+        let snapshot = ActivitySnapshot(appName: "Editor", bundleIdentifier: "test.Editor", processIdentifier: 1, windowTitle: "Notes", url: nil, source: .macOS)
+        let kept = ActivitySegment(startedAt: Date(), endedAt: Date().addingTimeInterval(60), snapshot: snapshot)
+        let dropped = ActivitySegment(startedAt: Date().addingTimeInterval(100), endedAt: Date().addingTimeInterval(160), snapshot: snapshot)
+        for item in [kept, dropped] { try store.save(segment: item, classification: classification(item.id)) }
+
+        _ = try store.correctSegments(ids: [kept.id], kind: .work, categoryID: nil)
+        _ = try store.correctSegments(ids: [dropped.id], kind: .ignored, categoryID: nil)
+
+        #expect(try store.latestCorrectionActionID() == nil)
+    }
+
     private func classification(_ id: UUID, kind: ActivityKind = .review) -> SegmentClassification {
         SegmentClassification(segmentID: id, kind: kind, categoryID: nil, projectID: nil, ruleID: nil, isManual: false)
     }

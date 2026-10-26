@@ -2799,8 +2799,12 @@ extension HagoStore {
         return actionID
     }
 
+    /// Only the newest choice can be undone. A permanent removal records nothing to restore, so it ends the
+    /// chain instead of letting Undo reach back to an earlier, unrelated choice.
     public func latestCorrectionActionID() throws -> UUID? {
-        try query("SELECT id FROM correction_actions WHERE undone=0 AND (rule_id IS NOT NULL OR EXISTS(SELECT 1 FROM correction_changes c WHERE c.action_id=correction_actions.id)) ORDER BY created_at DESC LIMIT 1") { uuidColumn($0, 0) }.first
+        try query("SELECT id, rule_id IS NOT NULL OR EXISTS(SELECT 1 FROM correction_changes c WHERE c.action_id=correction_actions.id) FROM correction_actions WHERE undone=0 ORDER BY created_at DESC LIMIT 1") {
+            boolColumn($0, 1) ? uuidColumn($0, 0) : nil
+        }.first ?? nil
     }
 
     @discardableResult
