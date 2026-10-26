@@ -45,14 +45,18 @@ struct ActiveWindowReader {
                 : "Chrome: tracking paused; Automation permission is missing. Use Allow Chrome Access in Tracking & Privacy."
         }
         if BrowserCapturePolicy.isBrowser(bundleIdentifier: bundle, appName: app.localizedName ?? "") {
-            return "\(app.localizedName ?? "Browser"): capture paused because private-window status cannot be verified"
+            return "\(app.localizedName ?? "Browser"): time counted for the app only; sites and titles need Chrome"
         }
         return accessibilityIsTrusted() ? "App and window context available" : "App tracking available; Accessibility access needed for window titles"
     }
 
     private static func snapshot(appName: String, bundleIdentifier: String, processIdentifier: pid_t) -> ActivitySnapshot? {
+        // Other browsers can't say whether a window is private, so only the app is recorded: no title, no address.
         if BrowserCapturePolicy.isBrowser(bundleIdentifier: bundleIdentifier, appName: appName) && bundleIdentifier != "com.google.Chrome" {
-            return nil
+            return ActivitySnapshot(
+                appName: appName, bundleIdentifier: bundleIdentifier, processIdentifier: processIdentifier,
+                windowTitle: "", url: nil, source: .macOS, isPrivate: false
+            )
         }
         let chromeInfo = chromeTabInfo(bundleIdentifier: bundleIdentifier, appName: appName)
         if bundleIdentifier == "com.google.Chrome", chromeInfo == nil { return nil }

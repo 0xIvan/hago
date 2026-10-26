@@ -747,7 +747,7 @@ struct AccessibilityAccessPanel: View {
                         systemImage: appState.accessibilityTrusted ? "checkmark.circle.fill" : "exclamationmark.triangle"
                     )
                     Text(appState.captureCapabilityLabel).font(.caption).foregroundStyle(.secondary)
-                    Text("Chrome supports verified public-window capture. Safari and other browsers are excluded until private-window status can be verified.")
+                    Text("Chrome records sites and page titles, and skips private windows. Safari and other browsers count as app time only, with no sites or titles, because Hago can't tell whether their windows are private.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text(appState.accessibilityTrusted
                          ? "Accessibility access lets Hago read active window titles."

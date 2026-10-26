@@ -191,7 +191,7 @@ struct OnboardingView: View {
                 Divider().padding(.leading, 42)
                 loginRow
             }
-            Text("Hago works without these, but more activity will need your review.")
+            Text("Hago works without these, but more activity will need your review. Sites are recognized in Chrome; Safari and other browsers count as app time only.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.top, 10)
