@@ -13,7 +13,7 @@ struct StarterPackPicker: View {
         let others = StarterPresets.packs.filter { !recommended.contains($0.id) }
         let othersOn = others.filter { profileStore.profile.presetIDs.contains($0.id) }.count
         VStack(alignment: .leading, spacing: 12) {
-            Picker("Profession", selection: Binding(get: { profession }, set: choose)) {
+            Picker("Profession", selection: Binding(get: { profession }, set: { choose($0) })) {
                 ForEach(ReviewAIProfession.allCases) { profession in
                     Text(profession.displayName).tag(profession)
                 }
