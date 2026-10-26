@@ -2875,11 +2875,16 @@ extension HagoStore {
             """) { classifiedSegmentColumn($0) }
         let calendar = Calendar.current
         var evidence: [String: [(kind: ActivityKind, day: TimeInterval, rule: Rule)]] = [:]
+        var keysBySignature: [String: String] = [:]
+        let factory = RememberedRuleFactory()
         for entry in manualEntries {
             let day = HagoCalendar.shared.dayInterval(containing: entry.segment.startedAt, calendar: calendar).start.timeIntervalSince1970
-            let options = RememberedRuleFactory().rules(from: entry, kind: entry.classification.kind, categoryID: entry.classification.categoryID)
+            let options = factory.rules(from: entry, kind: entry.classification.kind, categoryID: entry.classification.categoryID)
             for rule in options {
-                evidence[learningContextKey(rule), default: []].append((entry.classification.kind, day, rule))
+                let signature = learningSignature(rule)
+                let key = keysBySignature[signature] ?? learningContextKey(signature: signature)
+                keysBySignature[signature] = key
+                evidence[key, default: []].append((entry.classification.kind, day, rule))
             }
         }
         let dismissed = Dictionary(uniqueKeysWithValues: try query("SELECT context_key, evidence_key FROM learning_dismissals") { (stringColumn($0, 0), stringColumn($0, 1)) })
@@ -2896,8 +2901,23 @@ extension HagoStore {
     }
 
     private func learningContextKey(_ rule: Rule) -> String {
-        let signature = rule.conditions.map { "\($0.field.rawValue):\($0.operation.rawValue):\($0.value.lowercased())" }.sorted().joined(separator: "|")
-        return SHA256.hash(data: Data(signature.utf8)).map { String(format: "%02x", $0) }.joined()
+        learningContextKey(signature: learningSignature(rule))
+    }
+
+    private func learningSignature(_ rule: Rule) -> String {
+        rule.conditions.map { "\($0.field.rawValue):\($0.operation.rawValue):\($0.value.lowercased())" }.sorted().joined(separator: "|")
+    }
+
+    /// Persisted in learning_dismissals, so the hex SHA-256 form must not change.
+    private func learningContextKey(signature: String) -> String {
+        let digits = Array("0123456789abcdef".utf8)
+        var hex = [UInt8]()
+        hex.reserveCapacity(64)
+        for byte in SHA256.hash(data: Data(signature.utf8)) {
+            hex.append(digits[Int(byte >> 4)])
+            hex.append(digits[Int(byte & 0x0f)])
+        }
+        return String(decoding: hex, as: UTF8.self)
     }
 
     public func dismissLearningSuggestion(_ suggestion: CorrectionLearningSuggestion) throws {
