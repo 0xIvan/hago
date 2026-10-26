@@ -1,7 +1,7 @@
 import Foundation
 import SQLite3
 
-/// One consistent copy of the database per Hago day, kept beside it in `Backups/`, newest few only.
+/// One consistent copy of the database per Hago day, kept beside it in `Backups/Daily/`, newest few only.
 public struct DatabaseBackups: Sendable {
     public let databaseURL: URL
     public let keeping: Int
@@ -12,13 +12,16 @@ public struct DatabaseBackups: Sendable {
     }
 
     public var directory: URL {
-        databaseURL.deletingLastPathComponent().appendingPathComponent("Backups", isDirectory: true)
+        databaseURL.deletingLastPathComponent()
+            .appendingPathComponent("Backups", isDirectory: true)
+            .appendingPathComponent("Daily", isDirectory: true)
     }
 
+    /// Only files this type wrote, by exact name, so pruning can never touch a backup someone made by hand.
     public func existing() -> [URL] {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         return files
-            .filter { $0.lastPathComponent.hasPrefix("hago-") && $0.pathExtension == "sqlite" }
+            .filter { $0.lastPathComponent.wholeMatch(of: /hago-\d{4}-\d{2}-\d{2}\.sqlite/) != nil }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 

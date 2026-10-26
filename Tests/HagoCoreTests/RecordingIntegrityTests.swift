@@ -185,6 +185,10 @@ struct RecordingIntegrityTests {
         try store.checkpoint(segment: interval, classification: classification(interval))
 
         let backups = DatabaseBackups(databaseURL: url, keeping: 2)
+        let handMade = [directory.appendingPathComponent("Backups/hago-before-upgrade.sqlite"),
+                        backups.directory.appendingPathComponent("hago-before-cleanup.sqlite")]
+        try FileManager.default.createDirectory(at: backups.directory, withIntermediateDirectories: true)
+        for file in handMade { try Data("keep".utf8).write(to: file) }
         let first = try #require(try backups.backUpIfNeeded(now: base))
         #expect(try backups.backUpIfNeeded(now: base.addingTimeInterval(3_600)) == nil)
         #expect(try HagoStore(databaseURL: first).recentSegments(limit: 10).map(\.segment.id) == [interval.id])
@@ -194,6 +198,7 @@ struct RecordingIntegrityTests {
         }
         #expect(backups.existing().count == 2)
         #expect(!FileManager.default.fileExists(atPath: first.path))
+        #expect(handMade.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
     }
 
     @Test func reportEndLabelsUseTrackingDaysAcrossDSTAndYearBoundary() throws {

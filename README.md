@@ -43,7 +43,7 @@ user selects that CLI and confirms the disclosure in the app.
 
 Ignored activity is not persisted as detailed activity rows.
 
-A consistent copy of the database is written once a day to `Backups/` beside it,
+A consistent copy of the database is written once a day to `Backups/Daily/` beside it,
 and the newest three are kept. **Privacy → Your data** exports every recording
 as CSV, shows the database in Finder, and deletes all recorded time while
 keeping rules and settings.

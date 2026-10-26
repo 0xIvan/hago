@@ -870,7 +870,7 @@ struct PrivacySettingsView: View {
                         }
                     } label: {
                         Text("Database and backups")
-                        Text("A copy is kept each day for the last \(backups.keeping) days in the Backups folder beside the database.")
+                        Text("A copy is kept each day for the last \(backups.keeping) days in Backups/Daily beside the database.")
                     }
                 }
                 LabeledContent {
