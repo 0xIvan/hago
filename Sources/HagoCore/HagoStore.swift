@@ -102,6 +102,7 @@ public final class HagoStore {
         }
 
         database = connection
+        sqlite3_busy_timeout(connection, 3_000)
         do {
             try execute("PRAGMA foreign_keys = ON")
             try migrateVersioned(databaseURL: databaseURL)

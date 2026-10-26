@@ -92,41 +92,49 @@ final class AppState: ObservableObject {
         reviewAISettings = settingsStore.load()
         reviewAIHarnessDiscovery = ReviewAIHarnessDiscovery()
 
+        let store: HagoStore
         do {
-            let databaseURL = try HagoStore.defaultDatabaseURL()
-            store = try HagoStore(databaseURL: databaseURL)
-            if let store {
-                if let last = try store.recentSegments(limit: 1).first {
-                    recorder = ActivityRecorder(notBefore: last.segment.endedAt)
-                }
-                workProfileStore.prepare(hasHistory: try !store.recentSegments(limit: 1).isEmpty, presetIDs: try store.enabledPresetIDs())
-                reviewAIAnalysisService = ReviewAIAnalysisService(store: store)
-                reviewAIScheduleState = try store.loadReviewAIScheduleState()
-                if reviewAIScheduleState.outcome == .running {
-                    reviewAIScheduleState.recoverAfterRestart(at: Date(), interval: reviewAISettings.scheduleInterval)
-                    try store.saveReviewAIScheduleState(reviewAIScheduleState)
-                }
-                if reviewAISettings.scheduleEnabled {
-                    let previousNextRunAt = reviewAIScheduleState.nextRunAt
-                    reviewAIScheduleState.deferOverdueRunAfterLaunch(
-                        at: Date(), interval: reviewAISettings.scheduleInterval
-                    )
-                    if reviewAIScheduleState.nextRunAt != previousNextRunAt {
-                        try store.saveReviewAIScheduleState(reviewAIScheduleState)
-                    }
-                }
+            store = try HagoStore(databaseURL: HagoStore.defaultDatabaseURL())
+            self.store = store
+            if let last = try store.recentSegments(limit: 1).first {
+                recorder = ActivityRecorder(notBefore: last.segment.endedAt)
             }
-            // Launches and tracking polls only check access; the user starts permission requests.
-            try refresh()
-            refreshReviewAIHarnesses()
-            observeLifecycle()
-            startTracking()
-            DispatchQueue.main.async { [weak self] in
-                self?.hideFromDockIfNoWindowsAreOpen()
-            }
+            workProfileStore.prepare(hasHistory: try !store.recentSegments(limit: 1).isEmpty, presetIDs: try store.enabledPresetIDs())
         } catch {
             errorMessage = error.localizedDescription
             currentStateLabel = "Setup failed"
+            return
+        }
+
+        reviewAIAnalysisService = ReviewAIAnalysisService(store: store)
+        reload()
+        // Automatic Review is optional; its saved state must never keep time from being recorded.
+        do {
+            try restoreReviewAISchedule(store: store)
+        } catch {
+            reviewAIScheduleState = ReviewAIScheduleState()
+            errorMessage = "Automatic Review state could not be loaded and was reset: \(error.localizedDescription)"
+        }
+        observeLifecycle()
+        startTracking()
+        refreshReviewAIHarnesses()
+        DispatchQueue.main.async { [weak self] in
+            self?.hideFromDockIfNoWindowsAreOpen()
+        }
+    }
+
+    private func restoreReviewAISchedule(store: HagoStore) throws {
+        reviewAIScheduleState = try store.loadReviewAIScheduleState()
+        if reviewAIScheduleState.outcome == .running {
+            reviewAIScheduleState.recoverAfterRestart(at: Date(), interval: reviewAISettings.scheduleInterval)
+            try store.saveReviewAIScheduleState(reviewAIScheduleState)
+        }
+        if reviewAISettings.scheduleEnabled {
+            let previousNextRunAt = reviewAIScheduleState.nextRunAt
+            reviewAIScheduleState.deferOverdueRunAfterLaunch(at: Date(), interval: reviewAISettings.scheduleInterval)
+            if reviewAIScheduleState.nextRunAt != previousNextRunAt {
+                try store.saveReviewAIScheduleState(reviewAIScheduleState)
+            }
         }
     }
 
@@ -370,7 +378,8 @@ final class AppState: ObservableObject {
         activitySegments = try store.activitySegments(for: activityDate)
         refreshAccessibilityTrust()
         chromeAutomationGranted = reader.chromeAutomationIsGranted()
-        reviewAISuggestions = try reviewAIAnalysisService?.savedSuggestions(context: reviewAIAnalysisContext) ?? []
+        // Saved suggestions are a cache the next AI check rebuilds, so a bad row must not fail the whole refresh.
+        reviewAISuggestions = (try? reviewAIAnalysisService?.savedSuggestions(context: reviewAIAnalysisContext)) ?? []
     }
 
     private func refreshToday() throws {
