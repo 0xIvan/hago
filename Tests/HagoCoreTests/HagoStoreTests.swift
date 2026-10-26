@@ -649,6 +649,37 @@ struct HagoStoreTests {
     }
 
     @Test
+    func editingATitlePatternRuleReclassifiesHistoryItNowMatches() throws {
+        let store = try makeStore()
+        let date = middayToday()
+        let alpha = segment(appName: "Pages", bundleIdentifier: "com.apple.iWork.Pages", windowTitle: "Alpha plan",
+                            url: nil, source: .macOS, startedAt: date)
+        let beta = segment(appName: "Pages", bundleIdentifier: "com.apple.iWork.Pages", windowTitle: "Beta plan",
+                           url: nil, source: .macOS, offset: 300, startedAt: date)
+        for item in [alpha, beta] {
+            try store.save(segment: item, classification: SegmentClassification(
+                segmentID: item.id, kind: .review, categoryID: nil, projectID: nil, ruleID: nil, isManual: false
+            ))
+        }
+
+        var rule = Rule(
+            name: "Pages titles", priority: 150, enabled: true, isBuiltIn: false,
+            action: RuleAction(kind: .work, categoryID: SeedData.workCategoryID, projectID: nil),
+            conditions: [
+                RuleCondition(field: .bundleIdentifier, operation: .equals, value: "com.apple.iWork.Pages"),
+                RuleCondition(field: .windowTitle, operation: .regex, value: "^Alpha")
+            ]
+        )
+        try store.saveRule(rule, reclassify: .allHistory)
+        rule.conditions[1].value = "^Beta"
+        try store.saveRule(rule, reclassify: .allHistory)
+
+        let classifications = try classificationsBySegmentID(store: store, date: date)
+        #expect(classifications[beta.id]?.kind == .work)
+        #expect(classifications[alpha.id]?.kind == .review)
+    }
+
+    @Test
     func ruleReviewRecordsIdentifyConflictingRules() throws {
         let store = try makeStore()
         let condition = RuleCondition(field: .host, operation: .equals, value: "www.firecrawl.dev")

@@ -687,9 +687,10 @@ public final class HagoStore {
             for affectingRule in affectingRules {
                 let conditions = affectingRule.conditions.map(PreparedCondition.init)
                 for candidate in try reclassificationCandidates(matching: affectingRule, startDate: startDate)
-                    where visited.insert(candidate.segment.id).inserted {
+                    where !visited.contains(candidate.segment.id) {
                     let values = SnapshotValues(candidate.segment.snapshot)
                     guard PreparedCondition.matches(conditions, values: values) else { continue }
+                    visited.insert(candidate.segment.id)
                     let result = classifier.classify(snapshot: candidate.segment.snapshot, values: values, preparedRules: rules)
                     try applyReclassificationResult(result, to: candidate, preserveProject: preserveProjects)
                 }
