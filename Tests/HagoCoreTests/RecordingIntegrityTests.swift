@@ -128,6 +128,31 @@ struct RecordingIntegrityTests {
         #expect(try store.recentSegments(limit: 10).count == 1)
     }
 
+    @Test func timeAwayIsCutAtTheLastInputAndTheReturnStartsFresh() throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = try HagoStore(databaseURL: url)
+        var recorder = ActivityRecorder()
+        _ = recorder.observe(snapshot, at: base, uptime: 0)
+        for offset in stride(from: 5, through: 600, by: 5) {
+            for interval in recorder.observe(snapshot, at: base.addingTimeInterval(Double(offset)), uptime: Double(offset)) {
+                try store.checkpoint(segment: interval, classification: classification(interval))
+            }
+        }
+
+        let away = recorder.endCurrent(at: base.addingTimeInterval(120))
+        let ended = try #require(away)
+        try store.endRecording(id: ended.id, at: ended.endedAt)
+        _ = recorder.observe(snapshot, at: base.addingTimeInterval(900), uptime: 900)
+        for interval in recorder.observe(snapshot, at: base.addingTimeInterval(905), uptime: 905) {
+            try store.checkpoint(segment: interval, classification: classification(interval))
+        }
+
+        let saved = try store.recentSegments(limit: 10).map(\.segment).sorted { $0.startedAt < $1.startedAt }
+        #expect(saved.map(\.duration) == [120, 5])
+        #expect(saved.last?.startedAt == base.addingTimeInterval(900))
+    }
+
     @Test func dailyBackupsReopenWithHistoryAndKeepOnlyTheNewest() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("hago-backups-\(UUID())", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

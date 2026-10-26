@@ -35,7 +35,14 @@ private struct TrackingRows: View {
             }
         } label: {
             Text(appState.currentStateLabel)
-            Text("Reading and watching count without typing. Sleep, lock and pause stop tracking. If you leave your Mac awake and unlocked, remove that time in Activity → Individual → Edit Time.")
+            Text("Sleep, lock and pause stop tracking. Watching a video or sitting in a call counts even without typing.")
+        }
+        Picker(selection: $appState.awayAfterMinutes) {
+            Text("Never").tag(0)
+            ForEach([2, 5, 10, 15, 30], id: \.self) { Text("After \($0) minutes").tag($0) }
+        } label: {
+            Text("Stop counting when I'm away")
+            Text("With no keyboard or mouse use for this long, Hago stops at your last input, so the time away is not counted.")
         }
         if let error = appState.trackingErrorMessage {
             Text(error).foregroundStyle(.red)

@@ -74,6 +74,10 @@ final class AppState: ObservableObject {
     private var lifecycleObservers: [(NotificationCenter, NSObjectProtocol)] = []
     private var suspensionReasons: Set<String> = []
     @Published var isTrackingPaused = false
+    @Published private(set) var isAway = false
+    @Published var awayAfterMinutes = UserDefaults.standard.object(forKey: AppState.awayAfterMinutesKey) as? Int ?? 10 {
+        didSet { UserDefaults.standard.set(awayAfterMinutes, forKey: Self.awayAfterMinutesKey) }
+    }
     @Published var trackingErrorMessage: String?
     @Published var loginItemStatus = SMAppService.mainApp.status
     @Published var loginItemError: String?
@@ -84,6 +88,7 @@ final class AppState: ObservableObject {
     private var reviewAIAnalysisTask: Task<Void, Never>?
     private let pollInterval: TimeInterval = 5
     private static let accessibilityRequestedKey = "hago.accessibilityPermissionRequested"
+    private static let awayAfterMinutesKey = "hago.awayAfterMinutes"
 
     init() {
         if UserDefaults.standard.bool(forKey: Self.accessibilityRequestedKey) {
@@ -1128,6 +1133,30 @@ final class AppState: ObservableObject {
         tick()
     }
 
+    private func awaySince(now: Date) -> Date? {
+        guard awayAfterMinutes > 0 else { return nil }
+        let idle = IdleMonitor.secondsSinceInput()
+        guard idle >= TimeInterval(awayAfterMinutes * 60), !IdleMonitor.someoneIsWatching() else { return nil }
+        return now.addingTimeInterval(-idle)
+    }
+
+    private func stepAway(at lastInput: Date) {
+        isAway = true
+        captureRevision += 1
+        captureTask?.cancel()
+        captureTask = nil
+        persistCheckpoints()
+        currentSnapshot = nil
+        currentClassification = nil
+        guard let ended = recorder.endCurrent(at: lastInput) else { return }
+        do {
+            try store?.endRecording(id: ended.id, at: ended.endedAt)
+            try refreshRecordedActivity(includingReview: false)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func backUpOncePerDay(now: Date) {
         let day = HagoCalendar.shared.dayInterval(containing: now).start
         guard let backups, backedUpDay != day else { return }
@@ -1168,6 +1197,12 @@ final class AppState: ObservableObject {
             currentStateLabel = isTrackingPaused ? "Paused" : "Suspended"
             return
         }
+        if let lastInput = awaySince(now: now) {
+            if !isAway { stepAway(at: lastInput) }
+            currentStateLabel = "Away"
+            return
+        }
+        isAway = false
         checkScheduledReview()
         captureCapabilityLabel = reader.captureCapabilityLabel()
         chromeAutomationGranted = reader.chromeAutomationIsGranted()

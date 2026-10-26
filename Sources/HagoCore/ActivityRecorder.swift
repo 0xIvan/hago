@@ -45,4 +45,15 @@ public struct ActivityRecorder {
         lastUptime = uptime
         return checkpoints
     }
+
+    /// Ends the current recording at the last moment someone was at the Mac, so time away is not counted.
+    public mutating func endCurrent(at end: Date) -> ActivitySegment? {
+        guard var interval = current else { return nil }
+        interval.endedAt = min(max(end, interval.startedAt), interval.endedAt)
+        current = nil
+        lastObservation = nil
+        lastUptime = nil
+        latestEnd = max(latestEnd ?? interval.endedAt, interval.endedAt)
+        return interval
+    }
 }

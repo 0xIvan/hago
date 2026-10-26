@@ -182,6 +182,14 @@ public final class HagoStore {
         }
     }
 
+    /// Checkpoints only ever extend a recording; this is the one path that shortens its end.
+    public func endRecording(id: UUID, at end: Date) throws {
+        try execute(
+            "UPDATE activity_segments SET ended_at = MAX(started_at, MIN(ended_at, ?)) WHERE id = ?",
+            bindings: [.double(end.timeIntervalSince1970), .text(id.uuidString)]
+        )
+    }
+
     public func removeTime(segmentID: UUID, from start: Date, to end: Date) throws {
         try transaction {
             let segments = try query(

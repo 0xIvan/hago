@@ -267,6 +267,18 @@ private struct NowCard: View {
                 }
                 Spacer(minLength: 8)
                 Button("Resume") { appState.toggleTracking() }
+            } else if appState.isAway {
+                Image(systemName: "moon.zzz.fill")
+                    .font(.system(size: 26))
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Away")
+                        .font(.headline)
+                    Text("Time away isn't counted. Hago picks up when you're back.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
             } else if let snapshot = appState.currentSnapshot {
                 AppIconView(bundleIdentifier: snapshot.bundleIdentifier, host: snapshot.host, size: 32)
                 VStack(alignment: .leading, spacing: 2) {
