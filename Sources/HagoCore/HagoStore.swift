@@ -1276,11 +1276,12 @@ public final class HagoStore {
     }
 
     public func daySummary(for date: Date) throws -> DaySummary {
+        daySummary(from: try dayTimeline(for: date), on: date)
+    }
+
+    /// Summarizes a timeline already read with `dayTimeline(for:)`, so a caller needing both reads once.
+    public func daySummary(from segments: [ClassifiedSegment], on date: Date) -> DaySummary {
         let interval = dayInterval(for: date)
-        let segments = ActivityAggregation.timeline(
-            from: try classifiedSegments(startingAt: interval.start, endingBefore: interval.end, includingOverlaps: true),
-            in: interval
-        )
 
         var workSeconds: TimeInterval = 0
         var personalSeconds: TimeInterval = 0

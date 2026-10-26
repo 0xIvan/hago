@@ -74,7 +74,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             return
         }
 
-        button.attributedTitle = statusTitle(appState.menuBarTitle)
+        let title = appState.menuBarTitle
+        guard button.attributedTitle.string != title else { return }
+        button.attributedTitle = statusTitle(title)
         button.setAccessibilityLabel(appState.menuBarAccessibilityLabel)
     }
 

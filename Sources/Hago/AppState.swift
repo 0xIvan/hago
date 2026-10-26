@@ -31,7 +31,6 @@ final class AppState: ObservableObject {
     @Published var isDiscoveringReviewAIHarnesses = false
     @Published var lastReviewAIRunSummary: ReviewAIRunSummary?
     @Published var lastReviewAIUndoMessage: String?
-    @Published var recentSegments: [ClassifiedSegment] = []
     @Published var activityDate = Date()
     @Published var activitySegments: [ClassifiedSegment] = []
     @Published var rules: [Rule] = [] {
@@ -238,6 +237,11 @@ final class AppState: ObservableObject {
         }
         visibleAppWindows.insert(id)
         prepareToOpenAppWindow()
+        do {
+            try refreshRecordedActivity(includingReview: true)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func appWindowDidDisappear(id: String) {
@@ -356,9 +360,7 @@ final class AppState: ObservableObject {
         ruleReviewRecords = try store.ruleReviewRecords(for: rules)
         categories = try store.loadCategories()
         projects = try store.loadProjects()
-        let now = Date()
-        todaySummary = try store.daySummary(for: now)
-        todayTimeline = try store.dayTimeline(for: now)
+        try refreshToday()
         if reviewSegments.isEmpty || reviewSegments.contains(where: { !$0.classification.isManual && $0.segment.snapshot.isSignInPage }) {
             try store.fileSignInPagesInReview()
         }
@@ -366,10 +368,32 @@ final class AppState: ObservableObject {
         // A recommendation-only background run must not hide the latest View Applied / Undo controls.
         lastReviewAIRunSummary = try store.mostRecentReviewAIRun(appliedRulesOnly: true) ?? store.mostRecentReviewAIRun()
         activitySegments = try store.activitySegments(for: activityDate)
-        recentSegments = try store.recentSegments(limit: 20)
         refreshAccessibilityTrust()
         chromeAutomationGranted = reader.chromeAutomationIsGranted()
         reviewAISuggestions = try reviewAIAnalysisService?.savedSuggestions(context: reviewAIAnalysisContext) ?? []
+    }
+
+    private func refreshToday() throws {
+        guard let store else { return }
+        let now = Date()
+        let timeline = try store.dayTimeline(for: now)
+        todayTimeline = timeline
+        todaySummary = store.daySummary(from: timeline, on: now)
+    }
+
+    /// A new recording changes today's numbers, the open Activity day and, when Review time is
+    /// involved, the Review backlog. Rules, learning and AI state change only through edits, which refresh fully.
+    private func refreshRecordedActivity(includingReview: Bool) throws {
+        guard let store else { return }
+        try refreshToday()
+        guard !visibleAppWindows.isEmpty else { return }
+        if selectedSection == .activity {
+            activitySegments = try store.activitySegments(for: activityDate)
+        }
+        if includingReview {
+            reviewSegments = try store.reviewSegments()
+            reviewAISuggestions = try reviewAIAnalysisService?.savedSuggestions(context: reviewAIAnalysisContext) ?? []
+        }
     }
 
     func reload() {
@@ -1090,6 +1114,7 @@ final class AppState: ObservableObject {
         let timer = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        timer.tolerance = 1
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)
         tick()
@@ -1135,11 +1160,18 @@ final class AppState: ObservableObject {
             retained = recorder.current?.snapshot
         }
         let contextChanged = recorder.current?.snapshot.normalizedSignature != retained?.normalizedSignature
+        let touchesReview = currentClassification?.kind == .review || classification?.kind == .review
         currentSnapshot = retained
         currentClassification = classification
         enqueue(recorder.observe(retained, at: Date(), uptime: ProcessInfo.processInfo.systemUptime))
         let saved = persistCheckpoints()
-        if saved && contextChanged { reload() }
+        if saved && contextChanged && touchesReview {
+            do {
+                try refreshRecordedActivity(includingReview: true)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
         currentStateLabel = saved
             ? (classification?.kind.displayName ?? "Window context unavailable")
             : "Storage error"
@@ -1163,16 +1195,7 @@ final class AppState: ObservableObject {
                 }
                 pendingCheckpoints.removeValue(forKey: segment.id)
             }
-            todaySummary = try store.daySummary(for: Date())
-            if !visibleAppWindows.isEmpty {
-                todayTimeline = try store.dayTimeline(for: Date())
-                if selectedSection == .activity {
-                    activitySegments = try store.activitySegments(for: activityDate)
-                }
-                if selectedSection == .review {
-                    reviewSegments = try store.reviewSegments()
-                }
-            }
+            try refreshRecordedActivity(includingReview: selectedSection == .review && currentClassification?.kind == .review)
             trackingErrorMessage = nil
             return true
         } catch {
