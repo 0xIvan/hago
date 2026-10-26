@@ -284,7 +284,7 @@ private struct ReviewTab: View {
         .filter { !$0.subjects.isEmpty }
     }
 
-    private func rows(for subjects: [ReviewRow]) -> [ReviewRow] {
+    private func expandedRows(for subjects: [ReviewRow]) -> [ReviewRow] {
         subjects.flatMap { subject -> [ReviewRow] in
             guard subject.isGroup, expandedSubjectIDs.contains(subject.id) else { return [subject] }
             return [subject] + subject.entries.map { entry in
@@ -300,7 +300,7 @@ private struct ReviewTab: View {
     var body: some View {
         let subjects = subjects
         let sections = sections(for: subjects)
-        let rows = sections.flatMap { rows(for: $0.subjects) }
+        let rows = sections.flatMap { expandedRows(for: $0.subjects) }
         let selectedID = selectedID(in: rows)
         let bulkPicks = bulkPicks(in: subjects)
         VStack(spacing: 0) {
@@ -543,7 +543,7 @@ private struct ReviewTab: View {
 
     private func reviewSection(_ section: ReviewSectionRows, selectedID: String?, rows: [ReviewRow]) -> some View {
         Section(section.title) {
-            ForEach(self.rows(for: section.subjects)) { row in
+            ForEach(expandedRows(for: section.subjects)) { row in
                 let isSelected = row.id == selectedID
                 ReviewGroupRow(
                     row: row,
