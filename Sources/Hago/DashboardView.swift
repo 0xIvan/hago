@@ -148,28 +148,20 @@ private struct OverviewTab: View {
     }
 }
 
-private enum ReviewSort: String, CaseIterable, Identifiable {
-    case recent
-    case longest
-    case suggested
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .recent: "Recent"
-        case .longest: "Longest"
-        case .suggested: "AI First"
-        }
-    }
-}
-
 private struct ReviewEntry: Identifiable {
     let group: AggregatedActivity
     let item: ClassifiedSegment
     let suggestion: ReviewAISuggestion?
+    /// False when AI never sees this activity, such as Discord without channel titles.
+    let isAIEligible: Bool
 
     var id: String { group.id }
+}
+
+private enum ReviewAIState {
+    case pick(ReviewAISuggestion)
+    case needsYou
+    case unchecked
 }
 
 /// A selectable Review row: a whole website or app, or one of its pages when expanded.
@@ -192,6 +184,28 @@ private struct ReviewRow: Identifiable {
               entries.allSatisfy({ $0.suggestion?.id == first.id }) else { return nil }
         return first
     }
+
+    var aiState: ReviewAIState {
+        if let suggestion, ReviewSuggestionChoice.canAccept(suggestion) { return .pick(suggestion) }
+        if entries.contains(where: { $0.isAIEligible && $0.suggestion == nil }) { return .unchecked }
+        return .needsYou
+    }
+
+    var pick: ReviewAISuggestion? {
+        if case .pick(let suggestion) = aiState { return suggestion }
+        return nil
+    }
+
+    var isUnchecked: Bool {
+        if case .unchecked = aiState { return true }
+        return false
+    }
+}
+
+private struct ReviewSectionRows: Identifiable {
+    let id: String
+    let title: String
+    let subjects: [ReviewRow]
 }
 
 private struct ReviewTab: View {
@@ -201,9 +215,12 @@ private struct ReviewTab: View {
     @State private var selectedRowID: String?
     @State private var hoveredRowID: String?
     @State private var expandedSubjectIDs: Set<String> = []
-    @State private var sort = ReviewSort.recent
     @State private var confirmsBulkAccept = false
     @FocusState private var listHasKeyboardFocus: Bool
+
+    private var aiEnabled: Bool {
+        appState.reviewAISettings.selectedHarness != .disabled
+    }
 
     private var subjects: [ReviewRow] {
         let suggestionsByID = Dictionary(
@@ -218,10 +235,15 @@ private struct ReviewTab: View {
             guard let item = group.segmentIDs.lazy.compactMap({ segmentsByID[$0] }).first else {
                 return nil
             }
-            let suggestion = suggestionsByID.isEmpty
+            let aiGroupID = item.classification.isManual || item.segment.snapshot.isPrivate
                 ? nil
-                : ReviewAISuggestionRequest(reviewSegments: [item]).groups.first.flatMap { suggestionsByID[$0.id] }
-            return ReviewEntry(group: group, item: item, suggestion: suggestion)
+                : ReviewAISuggestionRequest(reviewSegments: [item]).groups.first?.id
+            return ReviewEntry(
+                group: group,
+                item: item,
+                suggestion: aiGroupID.flatMap { suggestionsByID[$0] },
+                isAIEligible: aiGroupID != nil
+            )
         }
 
         var order: [String] = []
@@ -231,33 +253,35 @@ private struct ReviewTab: View {
             if entriesBySubject[key] == nil { order.append(key) }
             entriesBySubject[key, default: []].append(entry)
         }
-        let subjects = order.map { key in
-            let entries = entriesBySubject[key] ?? []
-            return ReviewRow(
+        return order.map { key in
+            ReviewRow(
                 id: key,
                 subjectID: key,
-                entries: sort == .longest ? entries.sorted { $0.group.duration > $1.group.duration } : entries,
+                entries: (entriesBySubject[key] ?? []).sorted { $0.group.duration > $1.group.duration },
                 isPage: false
             )
         }
+        .sorted { $0.duration > $1.duration }
+    }
 
-        switch sort {
-        case .recent:
-            return subjects
-        case .longest:
-            return subjects.sorted { $0.duration > $1.duration }
-        case .suggested:
-            func confidence(_ row: ReviewRow) -> Double {
-                row.entries.compactMap(\.suggestion).map { (ReviewSuggestionChoice.canAccept($0) ? 1 : 0) + $0.confidence }.max() ?? -1
-            }
-            return subjects.enumerated().sorted { first, second in
-                let firstConfidence = confidence(first.element)
-                let secondConfidence = confidence(second.element)
-                if firstConfidence != secondConfidence { return firstConfidence > secondConfidence }
-                return first.offset < second.offset
-            }
-            .map(\.element)
+    private func sections(for subjects: [ReviewRow]) -> [ReviewSectionRows] {
+        guard aiEnabled else {
+            return [ReviewSectionRows(id: "needsYou", title: "Needs your call", subjects: subjects)]
         }
+        var picks: [ReviewRow] = [], needsYou: [ReviewRow] = [], unchecked: [ReviewRow] = []
+        for subject in subjects {
+            switch subject.aiState {
+            case .pick: picks.append(subject)
+            case .needsYou: needsYou.append(subject)
+            case .unchecked: unchecked.append(subject)
+            }
+        }
+        return [
+            ReviewSectionRows(id: "picks", title: "AI has a pick", subjects: picks),
+            ReviewSectionRows(id: "needsYou", title: "AI left these to you", subjects: needsYou),
+            ReviewSectionRows(id: "unchecked", title: "Not checked by AI yet", subjects: unchecked)
+        ]
+        .filter { !$0.subjects.isEmpty }
     }
 
     private func rows(for subjects: [ReviewRow]) -> [ReviewRow] {
@@ -269,25 +293,42 @@ private struct ReviewTab: View {
         }
     }
 
-    private var confidentSuggestions: [ReviewAISuggestion] {
-        appState.reviewAISuggestions.filter { suggestion in
-            (suggestion.kind == .work || suggestion.kind == .personal)
-                && suggestion.confidence >= 0.9
-                && ReviewAISuggestionValidator().validationResult(for: suggestion).canApply
-        }
+    private func bulkPicks(in subjects: [ReviewRow]) -> [ReviewAISuggestion] {
+        subjects.compactMap(\.pick).filter { $0.kind == .work || $0.kind == .personal }
     }
 
     var body: some View {
         let subjects = subjects
-        let rows = rows(for: subjects)
+        let sections = sections(for: subjects)
+        let rows = sections.flatMap { rows(for: $0.subjects) }
         let selectedID = selectedID(in: rows)
+        let bulkPicks = bulkPicks(in: subjects)
         VStack(spacing: 0) {
-            header(subjects)
+            header(subjects, bulkPicks: bulkPicks)
             ScrollViewReader { proxy in
                 List {
-                    CorrectionBanner()
+                    if subjects.isEmpty {
+                        ContentUnavailableView(
+                            "Nothing needs you",
+                            systemImage: "checkmark.circle",
+                            description: Text(aiEnabled
+                                ? "AI files new activity as it comes in. Anything it can't decide will show up here."
+                                : "Activity Hago can't file on its own will show up here.")
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                    }
+                    ForEach(sections) { section in
+                        reviewSection(section, selectedID: selectedID, rows: rows)
+                    }
                     LearningSuggestionsSection()
-                    reviewItemsSection(rows, selectedID: selectedID)
+                    if !rows.isEmpty {
+                        Text("↑ ↓ move · → open · W Work · P Personal · I Ignore · A accept AI pick")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity)
+                            .listRowSeparator(.hidden)
+                    }
                 }
                 .listStyle(.inset)
                 .focusable()
@@ -316,14 +357,12 @@ private struct ReviewTab: View {
                     guard press.modifiers.intersection([.command, .control, .option]).isEmpty,
                           let row = rows.first(where: { $0.id == selectedID }) else { return .ignored }
                     switch press.characters.lowercased() {
-                    case "w": classify(row, as: .work, in: rows)
-                    case "p": classify(row, as: .personal, in: rows)
-                    case "i": classify(row, as: .ignored, in: rows)
+                    case "w": decide(row, as: .work, in: rows)
+                    case "p": decide(row, as: .personal, in: rows)
+                    case "i": decide(row, as: .ignored, in: rows)
                     default:
-                        guard let suggestion = row.suggestion, ReviewSuggestionChoice.canAccept(suggestion) else {
-                            return .ignored
-                        }
-                        accept(suggestion, for: row, in: rows)
+                        guard let pick = row.pick else { return .ignored }
+                        accept(pick, for: row, in: rows)
                     }
                     return .handled
                 }
@@ -337,15 +376,15 @@ private struct ReviewTab: View {
                 .environmentObject(appState)
         }
         .confirmationDialog(
-            "Accept \(confidentSuggestions.count) AI suggestions?",
+            "Accept \(bulkPicks.count) AI pick\(bulkPicks.count == 1 ? "" : "s")?",
             isPresented: $confirmsBulkAccept
         ) {
-            Button("Create \(confidentSuggestions.count) Rules") {
-                appState.applyReviewAISuggestions(confidentSuggestions)
+            Button("Accept \(bulkPicks.count)") {
+                appState.applyReviewAISuggestions(bulkPicks)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Each suggestion at 90% confidence or higher becomes a Work or Personal rule and reclassifies its \(confidentSuggestions.reduce(0) { $0 + $1.affectedCount }) recordings. You can edit or delete the rules in Rules.")
+            Text("Each pick becomes a Work or Personal rule, so these sites and apps are filed automatically from now on, including their past recordings. You can change them in Rules.")
         }
     }
 
@@ -371,7 +410,12 @@ private struct ReviewTab: View {
         }
     }
 
-    private func classify(_ row: ReviewRow, as kind: ActivityKind, in rows: [ReviewRow]) {
+    /// Choosing what AI picked accepts its rule; any other choice only files these recordings.
+    private func decide(_ row: ReviewRow, as kind: ActivityKind, in rows: [ReviewRow]) {
+        if let pick = row.pick, ReviewSuggestionChoice.kind(pick) == kind {
+            accept(pick, for: row, in: rows)
+            return
+        }
         selectNext(after: row, removing: decided(by: row), in: rows)
         appState.classifyReview(segmentIDs: row.segmentIDs, as: kind)
     }
@@ -381,130 +425,129 @@ private struct ReviewTab: View {
         selectNext(after: row, removing: { decided($0) || $0.suggestion?.id == suggestion.id }, in: rows)
         appState.applyReviewAISuggestion(suggestion, as: suggestion.kind)
     }
-    private func header(_ subjects: [ReviewRow]) -> some View {
-        PageTop {
+
+    private func header(_ subjects: [ReviewRow], bulkPicks: [ReviewAISuggestion]) -> some View {
+        let unchecked = aiEnabled ? subjects.filter(\.isUnchecked).count : 0
+        return PageTop {
             PageHeader(
-                title: subjects.isEmpty ? "All caught up" : "\(subjects.count) to review",
-                subtitle: subjects.isEmpty
-                    ? "New activity Hago can't classify will show up here."
-                    : "\(HagoDuration.text(subjects.reduce(0) { $0 + $1.duration })) unclassified across \(appState.reviewSegments.count) recordings"
+                title: subjects.isEmpty ? "All caught up" : "\(subjects.count) left to review",
+                subtitle: subjects.isEmpty ? nil : subtitle(subjects, unchecked: unchecked)
             ) {
-                if !subjects.isEmpty {
-                    Picker("Sort", selection: $sort) {
-                        ForEach(ReviewSort.allCases.filter { $0 != .suggested || !appState.reviewAISuggestions.isEmpty }) { sort in
-                            Text(sort.title).tag(sort)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-
-                aiButton
+                headerActions(subjects, bulkPicks: bulkPicks, unchecked: unchecked)
             }
-
-            aiStatus
+            notices
         }
     }
 
+    private func subtitle(_ subjects: [ReviewRow], unchecked: Int) -> String {
+        let total = "\(HagoDuration.text(subjects.reduce(0) { $0 + $1.duration })) not filed yet"
+        let ai: String
+        if !aiEnabled {
+            ai = "Set up AI and it will file most of this for you."
+        } else if appState.reviewAIAnalysisState == .analyzing {
+            ai = "AI is going through them now."
+        } else if unchecked > 0 {
+            let next = appState.reviewAISettings.scheduleEnabled
+                ? appState.reviewAIScheduleState.nextRunAt.map { " It checks again at \($0.formatted(date: .omitted, time: .shortened))." } ?? ""
+                : ""
+            ai = "AI hasn't looked at \(unchecked == subjects.count ? "these" : "\(unchecked) of these") yet.\(next)"
+        } else {
+            ai = "AI looked at all of these and needs your call."
+        }
+        return "\(total) · \(ai)"
+    }
+
     @ViewBuilder
-    private var aiButton: some View {
+    private func headerActions(_ subjects: [ReviewRow], bulkPicks: [ReviewAISuggestion], unchecked: Int) -> some View {
         if appState.reviewAIAnalysisState == .analyzing {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Button("Stop", role: .destructive) { appState.stopReviewAIAnalysis() }
+                Button("Stop") { appState.stopReviewAIAnalysis() }
             }
-        } else if appState.reviewAISettings.selectedHarness == .disabled {
+        } else if !aiEnabled {
             Button {
                 appState.openHagoWindow(section: .aiReview)
             } label: {
                 Label("Set Up AI…", systemImage: "sparkles")
             }
-            .help("Connect an AI provider to suggest how to file this activity")
-        } else if !confidentSuggestions.isEmpty {
-            Button {
-                confirmsBulkAccept = true
-            } label: {
-                Label("Accept \(confidentSuggestions.count) Confident", systemImage: "checkmark.seal")
-            }
-            .buttonStyle(.borderedProminent)
-            .help("Accept every AI suggestion at 90% confidence or higher")
+            .help("Connect an AI provider to file this activity for you")
         } else {
-            Button {
-                appState.analyzeReview()
-            } label: {
-                Label("Suggest with AI", systemImage: "sparkles")
+            if unchecked > 0 {
+                Button {
+                    appState.analyzeReview()
+                } label: {
+                    Label("Check with AI", systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Ask \(appState.reviewAISettings.selectedHarness.displayName) to look at these now")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(appState.reviewSegments.isEmpty)
-            .help("Ask \(appState.reviewAISettings.selectedHarness.displayName) to suggest rules")
+            if !bulkPicks.isEmpty {
+                Button {
+                    confirmsBulkAccept = true
+                } label: {
+                    Label("Accept \(bulkPicks.count) AI Pick\(bulkPicks.count == 1 ? "" : "s")", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Turn every Work and Personal pick below into a rule")
+            }
+            if unchecked == 0, bulkPicks.isEmpty, !subjects.isEmpty {
+                Button {
+                    appState.analyzeReview()
+                } label: {
+                    Label("Ask Again", systemImage: "arrow.clockwise")
+                }
+                .help("Ask \(appState.reviewAISettings.selectedHarness.displayName) to look at these again")
+            }
         }
     }
 
+    /// One quiet line for what just happened: an undoable choice, AI's automatic filing, or an AI error.
     @ViewBuilder
-    private var aiStatus: some View {
-        let run = appState.lastReviewAIRunSummary.flatMap { $0.automaticallyAppliedCount > 0 ? $0 : nil }
-        let suggestionCount = appState.reviewAISuggestions.count
-        let message: (text: String, isError: Bool)? = switch appState.reviewAIAnalysisState {
-        case .analyzing:
-            ("Analyzing with \(appState.reviewAISettings.selectedHarness.displayName)…", false)
-        case .failed(let message):
-            (message, true)
-        case .completed where suggestionCount == 0:
-            ("No AI suggestions this time. Classify the items below by hand.", false)
-        default:
-            suggestionCount > 0 ? ("\(suggestionCount) AI suggestion\(suggestionCount == 1 ? "" : "s") shown on the items below. Press A to accept one.", false) : nil
+    private var notices: some View {
+        let run = appState.lastReviewAIRunSummary.flatMap {
+            $0.automaticallyAppliedCount > 0 && $0.createdAt > Date().addingTimeInterval(-86_400) ? $0 : nil
         }
+        let failure: String? = if case .failed(let message) = appState.reviewAIAnalysisState { message } else { nil }
 
-        if message != nil || run != nil || appState.lastReviewAIUndoMessage != nil {
-            HStack(spacing: 8) {
-                Image(systemName: message?.isError == true ? "exclamationmark.triangle.fill" : "sparkles")
-                    .foregroundStyle(message?.isError == true ? Color.red : Color.purple)
-                if let message {
-                    Text(message.text)
-                        .foregroundStyle(message.isError ? Color.red : Color.secondary)
-                        .lineLimit(2)
+        if failure != nil || appState.correctionMessage != nil || run != nil || appState.lastReviewAIUndoMessage != nil {
+            HStack(spacing: 16) {
+                if let failure {
+                    Label(failure, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                    Button("Try Again") { appState.analyzeReview() }
+                } else if let message = appState.correctionMessage {
+                    Label(message, systemImage: "checkmark.circle.fill")
+                        .lineLimit(1)
+                    if appState.latestCorrectionActionID != nil {
+                        Button("Undo") { appState.undoLatestCorrection() }
+                    }
                 }
+                Spacer(minLength: 0)
                 if let undoMessage = appState.lastReviewAIUndoMessage {
-                    Text(undoMessage).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if let run {
-                    Text("Auto-applied \(run.automaticallyAppliedCount) rule\(run.automaticallyAppliedCount == 1 ? "" : "s")")
-                        .foregroundStyle(.secondary)
+                    Text(undoMessage)
+                } else if let run {
+                    Label("AI filed \(run.automaticallyAppliedCount) automatically", systemImage: "sparkles")
                     Button("View") { inspectingRun = run }
                     if run.status == .completed {
                         Button("Undo") { appState.undoLastReviewAIRun() }
                     }
                 }
-                if suggestionCount > 0, sort != .suggested {
-                    Button("Show AI First") { sort = .suggested }
-                }
             }
             .font(.callout)
+            .foregroundStyle(.secondary)
+            .buttonStyle(.link)
             .controlSize(.small)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
-    private func reviewItemsSection(_ rows: [ReviewRow], selectedID: String?) -> some View {
-        Section {
-            if rows.isEmpty {
-                ContentUnavailableView(
-                    "Nothing to review",
-                    systemImage: "checkmark.circle",
-                    description: Text("Activity that needs a decision will appear here.")
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
-            }
-
-            ForEach(rows) { row in
+    private func reviewSection(_ section: ReviewSectionRows, selectedID: String?, rows: [ReviewRow]) -> some View {
+        Section(section.title) {
+            ForEach(self.rows(for: section.subjects)) { row in
                 let isSelected = row.id == selectedID
                 ReviewGroupRow(
                     row: row,
+                    showsAI: aiEnabled,
                     explanation: row.isGroup ? nil : appState.classificationExplanation(for: row.item),
                     recordingSummary: recordingSummary(for: row),
                     duration: HagoDuration.text(row.duration),
@@ -516,8 +559,7 @@ private struct ReviewTab: View {
                             expandedSubjectIDs.insert(row.subjectID)
                         }
                     },
-                    classify: { kind in classify(row, as: kind, in: rows) },
-                    accept: { suggestion in accept(suggestion, for: row, in: rows) },
+                    decide: { kind in decide(row, as: kind, in: rows) },
                     remember: { rememberingRule = $0 }
                 )
                 .id(row.id)
@@ -534,15 +576,6 @@ private struct ReviewTab: View {
                     }
                 }
                 .hagoRowBackground(isSelected: isSelected, isHovered: row.id == hoveredRowID)
-            }
-        } header: {
-            if !rows.isEmpty {
-                HStack {
-                    Text("Needs a decision")
-                    Spacer()
-                    Text("↑ ↓ move · → open · W Work · P Personal · I Ignore · A Accept AI")
-                        .foregroundStyle(.tertiary)
-                }
             }
         }
     }
@@ -573,6 +606,7 @@ private struct ReviewTab: View {
         return "\(row.segmentCount) recordings · \(dateRange)"
     }
 }
+
 private enum ReviewSuggestionChoice {
     static func kind(_ suggestion: ReviewAISuggestion) -> ActivityKind? {
         switch suggestion.kind {
@@ -591,6 +625,7 @@ private enum ReviewSuggestionChoice {
 private struct ReviewGroupRow: View {
     @EnvironmentObject private var appState: AppState
     let row: ReviewRow
+    let showsAI: Bool
     let explanation: String?
     let recordingSummary: String
     let duration: String
@@ -598,12 +633,12 @@ private struct ReviewGroupRow: View {
     let isExpanded: Bool?
     let showsActions: Bool
     let toggleExpanded: () -> Void
-    let classify: (ActivityKind) -> Void
-    let accept: (ReviewAISuggestion) -> Void
+    let decide: (ActivityKind) -> Void
     let remember: (Rule) -> Void
 
     private var segment: ActivitySegment { row.item.segment }
     private var isWebsite: Bool { !segment.snapshot.host.isEmpty }
+    private var pickedKind: ActivityKind? { row.pick.flatMap(ReviewSuggestionChoice.kind) }
 
     private var title: String {
         if row.isPage {
@@ -680,8 +715,8 @@ private struct ReviewGroupRow: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if let suggestion = row.suggestion {
-                    SuggestionLine(suggestion: suggestion)
+                if showsAI, let suggestion = row.suggestion {
+                    SuggestionLine(suggestion: suggestion, isPick: row.pick != nil)
                 }
             }
             .help(tooltip)
@@ -702,19 +737,32 @@ private struct ReviewGroupRow: View {
 
     private var actions: some View {
         HStack(spacing: 6) {
-            if let suggestion = row.suggestion,
-               ReviewSuggestionChoice.canAccept(suggestion),
-               let kind = ReviewSuggestionChoice.kind(suggestion) {
-                Button {
-                    accept(suggestion)
-                } label: {
-                    Label(kind == .ignored ? "Accept Ignore" : "Accept \(kind.displayName)", systemImage: "checkmark")
+            ForEach([ActivityKind.work, .personal]) { kind in
+                if kind == pickedKind {
+                    Button { decide(kind) } label: {
+                        Label(kind.displayName, systemImage: "sparkles")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .help("Accept AI's pick: \(pickHelp(kind))")
+                } else {
+                    Button(kind.displayName) { decide(kind) }
+                        .help("File these recordings as \(kind.displayName)")
                 }
-                .buttonStyle(.borderedProminent)
-                .help("Create the suggested rule and file \(suggestion.affectedCount) recording\(suggestion.affectedCount == 1 ? "" : "s") (A)")
             }
 
-            ClassifyButtons(currentKind: .review, classify: classify)
+            if pickedKind == .ignored {
+                Button(role: .destructive) { decide(.ignored) } label: {
+                    Label("Ignore", systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Accept AI's pick: \(pickHelp(.ignored))")
+            } else {
+                Button(role: .destructive) { decide(.ignored) } label: {
+                    Image(systemName: "eye.slash")
+                        .accessibilityLabel("Ignore")
+                }
+                .help("Delete these recordings so they never count")
+            }
 
             if !rememberOptions.isEmpty {
                 Menu {
@@ -723,7 +771,7 @@ private struct ReviewGroupRow: View {
                         if !options.isEmpty {
                             Section("Always \(kind.displayName)") {
                                 ForEach(options) { rule in
-                                    Button(optionTitle(rule)) { remember(rule) }
+                                    Button(appState.summary(for: rule)) { remember(rule) }
                                 }
                             }
                         }
@@ -741,23 +789,25 @@ private struct ReviewGroupRow: View {
         .controlSize(.small)
     }
 
-    private func optionTitle(_ rule: Rule) -> String {
-        appState.summary(for: rule)
+    private func pickHelp(_ kind: ActivityKind) -> String {
+        let scope = row.pick?.proposedRuleCondition.map { condition in
+            appState.summary(for: Rule(name: "", priority: 0, enabled: true, isBuiltIn: false,
+                                       action: RuleAction(kind: kind, categoryID: nil, projectID: nil),
+                                       conditions: [condition]))
+        } ?? title
+        return kind == .ignored ? "never record \(scope) (A)" : "always file \(scope) as \(kind.displayName) (A)"
     }
 }
 
 private struct SuggestionLine: View {
     let suggestion: ReviewAISuggestion
-
-    private var color: Color {
-        ReviewSuggestionChoice.kind(suggestion)?.tint ?? ActivityKind.review.tint
-    }
+    let isPick: Bool
 
     private var label: String {
         switch suggestion.kind {
-        case .unsure: "AI unsure"
-        case .ignored: "AI: Ignore"
-        default: "AI: \(suggestion.kind.displayName)"
+        case .unsure: "Unsure"
+        case .ignored: isPick ? "Ignore" : "Leans Ignore"
+        default: isPick ? suggestion.kind.displayName : "Leans \(suggestion.kind.displayName)"
         }
     }
 
@@ -765,16 +815,13 @@ private struct SuggestionLine: View {
         HStack(spacing: 6) {
             Label(label, systemImage: "sparkles")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(color)
-            Text("\(Int(round(suggestion.confidence * 100)))%")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isPick ? (ReviewSuggestionChoice.kind(suggestion)?.tint ?? .secondary) : .secondary)
             Text(suggestion.reason)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-        .help(suggestion.reason)
+        .help("\(suggestion.reason)\n\(Int(round(suggestion.confidence * 100)))% confident")
     }
 }
 

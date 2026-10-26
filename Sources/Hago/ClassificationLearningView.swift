@@ -7,7 +7,7 @@ struct LearningSuggestionsSection: View {
 
     var body: some View {
         if !appState.learningSuggestions.isEmpty {
-            Section("Hago noticed a pattern") {
+            Section("Make it automatic") {
                 ForEach(appState.learningSuggestions.prefix(5)) { suggestion in
                     HStack(spacing: 12) {
                         Image(systemName: "lightbulb")
