@@ -9,7 +9,7 @@ struct OnboardingView: View {
     @State private var showsWorkSites = false
     @State private var error: String?
 
-    private static let stepTitles = ["Allow access", "Your work", "Ready"]
+    private static let stepTitles = ["Allow access", "Your role", "Your work", "Ready"]
 
     private var step: Int {
         min(profileStore.profile.step, Self.stepTitles.count - 1)
@@ -26,7 +26,8 @@ struct OnboardingView: View {
                 Group {
                     switch step {
                     case 0: accessStep
-                    case 1: workStep
+                    case 1: roleStep
+                    case 2: workStep
                     default: readyStep
                     }
                 }
@@ -108,7 +109,7 @@ struct OnboardingView: View {
 
     private func advance() {
         do {
-            if step == 1 { try appState.applyWorkProfile(&profileStore.profile) }
+            if step == 1 || step == 2 { try appState.applyWorkProfile(&profileStore.profile) }
             if isLastStep {
                 profileStore.finish()
                 appState.selectedSection = .overview
@@ -255,34 +256,36 @@ struct OnboardingView: View {
         .padding(.vertical, 10)
     }
 
+    private var roleStep: some View {
+        VStack(spacing: 0) {
+            heading(
+                "person.crop.rectangle",
+                "What do you do?",
+                "Hago turns on starter rules for your field and files common personal sites, so most of your day sorts itself. Untick anything that doesn’t fit."
+            )
+            OnboardingCard {
+                StarterPackPicker().padding(.vertical, 12)
+            }
+            Text("Your profession also guides AI suggestions if you turn them on.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+        }
+    }
+
     private var workStep: some View {
         VStack(spacing: 0) {
             heading(
                 "briefcase",
-                "What counts as work?",
-                "Pick a starting point. Anything Hago isn’t sure about goes to Needs review, and you can teach it from there."
+                "What else counts as work?",
+                "Add apps and sites you only use for work. Anything Hago isn’t sure about goes to Needs review, and you can teach it from there."
             )
-            HStack(alignment: .top, spacing: 10) {
-                ForEach(StarterPresets.packs) { preset in
-                    PresetCard(
-                        preset: preset,
-                        isSelected: profileStore.profile.presetIDs.contains(preset.id)
-                    ) {
-                        if profileStore.profile.presetIDs.contains(preset.id) {
-                            profileStore.profile.presetIDs.remove(preset.id)
-                        } else {
-                            profileStore.profile.presetIDs.insert(preset.id)
-                        }
-                    }
-                }
-            }
-            .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 8) {
                 Text("Apps you only use for work")
                     .font(.subheadline.weight(.semibold))
                 WorkAppSelectionView(selectedIDs: $profileStore.profile.workApps)
             }
-            .padding(.top, 18)
             if showsWorkSites {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Work-only websites")
@@ -424,44 +427,5 @@ private struct OnboardingRowIcon: View {
             .frame(width: 30, height: 30)
             .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .accessibilityHidden(true)
-    }
-}
-
-private struct PresetCard: View {
-    var preset: StarterPreset
-    var isSelected: Bool
-    var toggle: () -> Void
-
-    var body: some View {
-        Button(action: toggle) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(systemName: preset.id == "software-development" ? "chevron.left.forwardslash.chevron.right" : "briefcase")
-                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                    Spacer()
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.5))
-                }
-                .frame(height: 20)
-                Text(preset.name).font(.headline)
-                Text(preset.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 104, maxHeight: .infinity, alignment: .topLeading)
-            .background(
-                isSelected ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.045),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isSelected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

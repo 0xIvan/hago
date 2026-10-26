@@ -6,7 +6,7 @@ struct WorkProfile: Codable, Equatable {
     var version = 1
     var step = 0
     var completed = false
-    var presetIDs: Set<String> = ["general-work"]
+    var presetIDs = StarterPresets.defaultPresetIDs(for: .notSpecified)
     var workDomains = ""
     var workApps: Set<String> = []
     var ruleIDs: [String: UUID] = [:]

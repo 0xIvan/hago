@@ -9,8 +9,8 @@ struct WorkProfileView: View {
     var body: some View {
         Form {
             Section("Starter rules") {
-                Toggle("Developer tools", isOn: presetBinding("software-development"))
-                Text("Dedicated editors and localhost default to Work. Choose shared apps and websites below.")
+                StarterPackPicker()
+                Text("Starter rules file common apps and sites for your field. Your own, remembered and AI rules always win. Choose shared apps and websites below.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Tools you use for work") {
@@ -27,13 +27,6 @@ struct WorkProfileView: View {
             if let message { Text(message).foregroundStyle(.secondary) }
         }
         .formStyle(.grouped)
-    }
-
-    private func presetBinding(_ id: String) -> Binding<Bool> {
-        Binding(get: { profileStore.profile.presetIDs.contains(id) }, set: { enabled in
-            if enabled { profileStore.profile.presetIDs.insert(id) }
-            else { profileStore.profile.presetIDs.remove(id) }
-        })
     }
 
     private func save() {
