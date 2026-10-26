@@ -10,6 +10,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let menuItem = NSMenuItem()
     private weak var menuContentView: NSView?
     private var cancellables: Set<AnyCancellable> = []
+    private var showsPaused = false
 
     init(appState: AppState) {
         self.appState = appState
@@ -67,6 +68,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 }
             }
             .store(in: &cancellables)
+        appState.$isTrackingPaused
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.updateButton()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     private func updateButton() {
@@ -74,6 +82,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             return
         }
 
+        if showsPaused != appState.isTrackingPaused {
+            showsPaused = appState.isTrackingPaused
+            let paused = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "Hago paused")
+            paused?.isTemplate = true
+            button.image = showsPaused ? paused : statusImage()
+            button.setAccessibilityLabel(appState.menuBarAccessibilityLabel)
+        }
         let title = appState.menuBarTitle
         guard button.attributedTitle.string != title else { return }
         button.attributedTitle = statusTitle(title)

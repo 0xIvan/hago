@@ -59,6 +59,21 @@ struct DayRing<Center: View>: View {
             }
         }
         .aspectRatio(1, contentMode: .fit)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private var accessibilitySummary: String {
+        var seconds: [ActivityKind: TimeInterval] = [:]
+        for span in spans {
+            seconds[span.kind, default: 0] += max(0, min(span.endedAt, day.end).timeIntervalSince(max(span.startedAt, day.start)))
+        }
+        let parts = [ActivityKind.work, .personal, .review].compactMap { kind -> String? in
+            guard let value = seconds[kind], value >= 60 else { return nil }
+            let duration = Duration.seconds(Int(value) / 60 * 60).formatted(.units(allowed: [.hours, .minutes], width: .wide))
+            return "\(kind == .review ? "not filed" : kind.displayName.lowercased()) \(duration)"
+        }
+        return parts.isEmpty ? "Day ring, nothing recorded yet" : "Day ring: " + parts.joined(separator: ", ")
     }
 
     /// Quick switches between apps would draw as a barcode at ring scale, so each slot of a few

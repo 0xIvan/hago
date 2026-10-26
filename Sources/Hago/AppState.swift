@@ -159,7 +159,7 @@ final class AppState: ObservableObject {
             let wholeMinutes = max(0, Int(seconds.rounded())) / 60
             return Duration.seconds(wholeMinutes * 60).formatted(.units(allowed: [.hours, .minutes], width: .wide))
         }
-        return "Hago. Work: \(spokenDuration(todaySummary.workSeconds)). Total tracked: \(spokenDuration(todayTrackedSeconds))."
+        return "Hago\(isTrackingPaused ? ", paused" : ""). Work: \(spokenDuration(todaySummary.workSeconds)). Total tracked: \(spokenDuration(todayTrackedSeconds))."
     }
 
     var todayTrackedSeconds: TimeInterval {
@@ -1215,7 +1215,10 @@ final class AppState: ObservableObject {
             captureTask = nil
             guard !isTrackingPaused, suspensionReasons.isEmpty else { return }
             let foregroundPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-            let valid = snapshot.flatMap { $0.processIdentifier == foregroundPID ? $0 : nil }
+            // Time spent looking at Hago itself is neither work nor personal.
+            let valid = snapshot.flatMap {
+                $0.processIdentifier == foregroundPID && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier ? $0 : nil
+            }
             recordObservation(valid)
         }
     }
