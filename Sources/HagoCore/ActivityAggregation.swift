@@ -98,6 +98,15 @@ public enum ActivityAggregation {
             .sorted { $0.lastEndedAt > $1.lastEndedAt }
     }
 
+    /// Review decisions are made per website, or per app outside the browser.
+    public static func reviewSubjectKey(for snapshot: ActivitySnapshot) -> String {
+        var host = snapshot.host.lowercased()
+        if host.hasPrefix("www.") { host.removeFirst(4) }
+        if !host.isEmpty { return "site:\(host)" }
+        let bundle = snapshot.bundleIdentifier.lowercased()
+        return "app:\(bundle.isEmpty ? snapshot.appName.lowercased() : bundle)"
+    }
+
     private static func groups(from segments: [ClassifiedSegment], matchingWindows: Bool) -> [AggregatedActivity] {
         var groups: [String: AggregatedActivity] = [:]
 

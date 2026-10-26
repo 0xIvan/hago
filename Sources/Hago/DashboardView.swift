@@ -11,13 +11,13 @@ struct DashboardView: View {
             List(selection: $appState.selectedSection) {
                 Section {
                     ForEach(HagoSection.primarySections) { section in
-                        SidebarSectionLabel(section: section, reviewCount: appState.reviewGroups.count)
+                        SidebarSectionLabel(section: section, reviewCount: appState.reviewSubjectCount)
                             .tag(section)
                     }
                 }
                 Section("Settings") {
                     ForEach(HagoSection.settingsSections) { section in
-                        SidebarSectionLabel(section: section, reviewCount: appState.reviewGroups.count)
+                        SidebarSectionLabel(section: section, reviewCount: appState.reviewSubjectCount)
                             .tag(section)
                     }
                 }
@@ -91,7 +91,7 @@ private struct OverviewTab: View {
                         Button {
                             appState.selectedSection = .review
                         } label: {
-                            Label("Review \(appState.reviewGroups.count)", systemImage: HagoSection.review.symbolName)
+                            Label("Review \(appState.reviewSubjectCount)", systemImage: HagoSection.review.symbolName)
                         }
                     }
                     Button {
@@ -172,23 +172,50 @@ private struct ReviewEntry: Identifiable {
     var id: String { group.id }
 }
 
+/// A selectable Review row: a whole website or app, or one of its pages when expanded.
+private struct ReviewRow: Identifiable {
+    let id: String
+    let subjectID: String
+    let entries: [ReviewEntry]
+    let isPage: Bool
+
+    var item: ClassifiedSegment { entries[0].item }
+    var segmentIDs: [UUID] { entries.flatMap(\.group.segmentIDs) }
+    var segmentCount: Int { entries.reduce(0) { $0 + $1.group.segmentCount } }
+    var duration: TimeInterval { entries.reduce(0) { $0 + $1.group.duration } }
+    var firstStartedAt: Date { entries.map(\.group.firstStartedAt).min() ?? .distantPast }
+    var lastEndedAt: Date { entries.map(\.group.lastEndedAt).max() ?? .distantPast }
+    var isGroup: Bool { entries.count > 1 }
+
+    var suggestion: ReviewAISuggestion? {
+        guard let first = entries[0].suggestion,
+              entries.allSatisfy({ $0.suggestion?.id == first.id }) else { return nil }
+        return first
+    }
+}
+
 private struct ReviewTab: View {
     @EnvironmentObject private var appState: AppState
     @State private var inspectingRun: ReviewAIRunSummary?
     @State private var rememberingRule: Rule?
-    @State private var selectedGroupID: String?
-    @State private var hoveredGroupID: String?
+    @State private var selectedRowID: String?
+    @State private var hoveredRowID: String?
+    @State private var expandedSubjectIDs: Set<String> = []
     @State private var sort = ReviewSort.recent
     @State private var confirmsBulkAccept = false
     @FocusState private var listHasKeyboardFocus: Bool
 
-    private var entries: [ReviewEntry] {
+    private var subjects: [ReviewRow] {
         let suggestionsByID = Dictionary(
             appState.reviewAISuggestions.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        let segmentsByID = Dictionary(
+            appState.reviewSegments.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let entries = appState.reviewGroups.compactMap { group -> ReviewEntry? in
-            guard let item = appState.reviewSegments.first(where: { group.segmentIDs.contains($0.id) }) else {
+            guard let item = group.segmentIDs.lazy.compactMap({ segmentsByID[$0] }).first else {
                 return nil
             }
             let suggestion = suggestionsByID.isEmpty
@@ -197,19 +224,48 @@ private struct ReviewTab: View {
             return ReviewEntry(group: group, item: item, suggestion: suggestion)
         }
 
+        var order: [String] = []
+        var entriesBySubject: [String: [ReviewEntry]] = [:]
+        for entry in entries {
+            let key = ActivityAggregation.reviewSubjectKey(for: entry.item.segment.snapshot)
+            if entriesBySubject[key] == nil { order.append(key) }
+            entriesBySubject[key, default: []].append(entry)
+        }
+        let subjects = order.map { key in
+            let entries = entriesBySubject[key] ?? []
+            return ReviewRow(
+                id: key,
+                subjectID: key,
+                entries: sort == .longest ? entries.sorted { $0.group.duration > $1.group.duration } : entries,
+                isPage: false
+            )
+        }
+
         switch sort {
         case .recent:
-            return entries
+            return subjects
         case .longest:
-            return entries.sorted { $0.group.duration > $1.group.duration }
+            return subjects.sorted { $0.duration > $1.duration }
         case .suggested:
-            return entries.enumerated().sorted { first, second in
-                let firstConfidence = first.element.suggestion.map { (ReviewSuggestionChoice.canAccept($0) ? 1 : 0) + $0.confidence } ?? -1
-                let secondConfidence = second.element.suggestion.map { (ReviewSuggestionChoice.canAccept($0) ? 1 : 0) + $0.confidence } ?? -1
+            func confidence(_ row: ReviewRow) -> Double {
+                row.entries.compactMap(\.suggestion).map { (ReviewSuggestionChoice.canAccept($0) ? 1 : 0) + $0.confidence }.max() ?? -1
+            }
+            return subjects.enumerated().sorted { first, second in
+                let firstConfidence = confidence(first.element)
+                let secondConfidence = confidence(second.element)
                 if firstConfidence != secondConfidence { return firstConfidence > secondConfidence }
                 return first.offset < second.offset
             }
             .map(\.element)
+        }
+    }
+
+    private func rows(for subjects: [ReviewRow]) -> [ReviewRow] {
+        subjects.flatMap { subject -> [ReviewRow] in
+            guard subject.isGroup, expandedSubjectIDs.contains(subject.id) else { return [subject] }
+            return [subject] + subject.entries.map { entry in
+                ReviewRow(id: "\(subject.id)|\(entry.id)", subjectID: subject.id, entries: [entry], isPage: true)
+            }
         }
     }
 
@@ -222,15 +278,16 @@ private struct ReviewTab: View {
     }
 
     var body: some View {
-        let entries = entries
-        let selectedID = selectedID(in: entries)
+        let subjects = subjects
+        let rows = rows(for: subjects)
+        let selectedID = selectedID(in: rows)
         VStack(spacing: 0) {
-            header(entries)
+            header(subjects)
             ScrollViewReader { proxy in
                 List {
                     CorrectionBanner()
                     LearningSuggestionsSection()
-                    reviewItemsSection(entries, selectedID: selectedID)
+                    reviewItemsSection(rows, selectedID: selectedID)
                 }
                 .listStyle(.inset)
                 .focusable()
@@ -238,25 +295,35 @@ private struct ReviewTab: View {
                 .focused($listHasKeyboardFocus)
                 .onAppear { listHasKeyboardFocus = true }
                 .onKeyPress(keys: [.upArrow, .downArrow]) { press in
-                    guard let index = entries.firstIndex(where: { $0.id == selectedID }) else { return .ignored }
+                    guard let index = rows.firstIndex(where: { $0.id == selectedID }) else { return .ignored }
                     let next = press.key == .upArrow ? index - 1 : index + 1
-                    guard entries.indices.contains(next) else { return .handled }
-                    selectedGroupID = entries[next].id
-                    proxy.scrollTo(entries[next].id)
+                    guard rows.indices.contains(next) else { return .handled }
+                    selectedRowID = rows[next].id
+                    proxy.scrollTo(rows[next].id)
+                    return .handled
+                }
+                .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
+                    guard let row = rows.first(where: { $0.id == selectedID }) else { return .ignored }
+                    if press.key == .rightArrow, row.isGroup {
+                        expandedSubjectIDs.insert(row.subjectID)
+                    } else if press.key == .leftArrow {
+                        expandedSubjectIDs.remove(row.subjectID)
+                        selectedRowID = row.subjectID
+                    }
                     return .handled
                 }
                 .onKeyPress(characters: CharacterSet(charactersIn: "wWpPiIaA")) { press in
                     guard press.modifiers.intersection([.command, .control, .option]).isEmpty,
-                          let entry = entries.first(where: { $0.id == selectedID }) else { return .ignored }
+                          let row = rows.first(where: { $0.id == selectedID }) else { return .ignored }
                     switch press.characters.lowercased() {
-                    case "w": classify(entry, as: .work, in: entries)
-                    case "p": classify(entry, as: .personal, in: entries)
-                    case "i": classify(entry, as: .ignored, in: entries)
+                    case "w": classify(row, as: .work, in: rows)
+                    case "p": classify(row, as: .personal, in: rows)
+                    case "i": classify(row, as: .ignored, in: rows)
                     default:
-                        guard let suggestion = entry.suggestion, ReviewSuggestionChoice.canAccept(suggestion) else {
+                        guard let suggestion = row.suggestion, ReviewSuggestionChoice.canAccept(suggestion) else {
                             return .ignored
                         }
-                        accept(suggestion, for: entry, in: entries)
+                        accept(suggestion, for: row, in: rows)
                     }
                     return .handled
                 }
@@ -282,39 +349,47 @@ private struct ReviewTab: View {
         }
     }
 
-    private func selectedID(in entries: [ReviewEntry]) -> String? {
-        if let selectedGroupID, entries.contains(where: { $0.id == selectedGroupID }) {
-            return selectedGroupID
+    private func selectedID(in rows: [ReviewRow]) -> String? {
+        if let selectedRowID, rows.contains(where: { $0.id == selectedRowID }) {
+            return selectedRowID
         }
-        return entries.first?.id
+        return rows.first?.id
     }
 
-    private func selectNext(after entry: ReviewEntry, removing removedIDs: Set<String>, in entries: [ReviewEntry]) {
-        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
-        let remaining = entries.enumerated().filter { !removedIDs.contains($0.element.id) }
-        selectedGroupID = remaining.first(where: { $0.offset > index })?.element.id ?? remaining.last?.element.id
+    private func selectNext(after row: ReviewRow, removing removed: (ReviewRow) -> Bool, in rows: [ReviewRow]) {
+        guard let index = rows.firstIndex(where: { $0.id == row.id }) else { return }
+        let remaining = rows.enumerated().filter { !removed($0.element) }
+        selectedRowID = remaining.first(where: { $0.offset > index })?.element.id ?? remaining.last?.element.id
     }
 
-    private func classify(_ entry: ReviewEntry, as kind: ActivityKind, in entries: [ReviewEntry]) {
-        selectNext(after: entry, removing: [entry.id], in: entries)
-        appState.classifyReviewGroup(entry.group, as: kind)
+    private func decided(by row: ReviewRow) -> (ReviewRow) -> Bool {
+        let groupIDs = Set(row.entries.map(\.id))
+        return { other in
+            other.id == row.id
+                || (!row.isPage && other.subjectID == row.subjectID)
+                || (other.isPage && groupIDs.isSuperset(of: other.entries.map(\.id)))
+        }
     }
 
-    private func accept(_ suggestion: ReviewAISuggestion, for entry: ReviewEntry, in entries: [ReviewEntry]) {
-        let covered = Set(entries.filter { $0.suggestion?.id == suggestion.id }.map(\.id))
-        selectNext(after: entry, removing: covered.union([entry.id]), in: entries)
+    private func classify(_ row: ReviewRow, as kind: ActivityKind, in rows: [ReviewRow]) {
+        selectNext(after: row, removing: decided(by: row), in: rows)
+        appState.classifyReview(segmentIDs: row.segmentIDs, as: kind)
+    }
+
+    private func accept(_ suggestion: ReviewAISuggestion, for row: ReviewRow, in rows: [ReviewRow]) {
+        let decided = decided(by: row)
+        selectNext(after: row, removing: { decided($0) || $0.suggestion?.id == suggestion.id }, in: rows)
         appState.applyReviewAISuggestion(suggestion, as: suggestion.kind)
     }
-
-    private func header(_ entries: [ReviewEntry]) -> some View {
+    private func header(_ subjects: [ReviewRow]) -> some View {
         PageTop {
             PageHeader(
-                title: entries.isEmpty ? "All caught up" : "\(entries.count) to review",
-                subtitle: entries.isEmpty
+                title: subjects.isEmpty ? "All caught up" : "\(subjects.count) to review",
+                subtitle: subjects.isEmpty
                     ? "New activity Hago can't classify will show up here."
-                    : "\(HagoDuration.text(entries.reduce(0) { $0 + $1.group.duration })) unclassified across \(appState.reviewSegments.count) recordings"
+                    : "\(HagoDuration.text(subjects.reduce(0) { $0 + $1.duration })) unclassified across \(appState.reviewSegments.count) recordings"
             ) {
-                if !entries.isEmpty {
+                if !subjects.isEmpty {
                     Picker("Sort", selection: $sort) {
                         ForEach(ReviewSort.allCases.filter { $0 != .suggested || !appState.reviewAISuggestions.isEmpty }) { sort in
                             Text(sort.title).tag(sort)
@@ -414,9 +489,9 @@ private struct ReviewTab: View {
         }
     }
 
-    private func reviewItemsSection(_ entries: [ReviewEntry], selectedID: String?) -> some View {
+    private func reviewItemsSection(_ rows: [ReviewRow], selectedID: String?) -> some View {
         Section {
-            if entries.isEmpty {
+            if rows.isEmpty {
                 ContentUnavailableView(
                     "Nothing to review",
                     systemImage: "checkmark.circle",
@@ -426,68 +501,78 @@ private struct ReviewTab: View {
                 .padding(.vertical, 40)
             }
 
-            ForEach(entries) { entry in
-                let isSelected = entry.id == selectedID
+            ForEach(rows) { row in
+                let isSelected = row.id == selectedID
                 ReviewGroupRow(
-                    entry: entry,
-                    explanation: appState.classificationExplanation(for: entry.item),
-                    recordingSummary: recordingSummary(for: entry.group),
-                    duration: HagoDuration.text(entry.group.duration),
-                    rememberOptions: rememberOptions(for: entry.item),
-                    showsActions: isSelected || entry.id == hoveredGroupID,
-                    classify: { kind in classify(entry, as: kind, in: entries) },
-                    accept: { suggestion in accept(suggestion, for: entry, in: entries) },
+                    row: row,
+                    explanation: row.isGroup ? nil : appState.classificationExplanation(for: row.item),
+                    recordingSummary: recordingSummary(for: row),
+                    duration: HagoDuration.text(row.duration),
+                    rememberOptions: rememberOptions(for: row),
+                    isExpanded: row.isGroup ? expandedSubjectIDs.contains(row.subjectID) : nil,
+                    showsActions: isSelected || row.id == hoveredRowID,
+                    toggleExpanded: {
+                        if expandedSubjectIDs.remove(row.subjectID) == nil {
+                            expandedSubjectIDs.insert(row.subjectID)
+                        }
+                    },
+                    classify: { kind in classify(row, as: kind, in: rows) },
+                    accept: { suggestion in accept(suggestion, for: row, in: rows) },
                     remember: { rememberingRule = $0 }
                 )
-                .id(entry.id)
+                .id(row.id)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    selectedGroupID = entry.id
+                    selectedRowID = row.id
                     listHasKeyboardFocus = true
                 }
                 .onHover { hovering in
                     if hovering {
-                        hoveredGroupID = entry.id
-                    } else if hoveredGroupID == entry.id {
-                        hoveredGroupID = nil
+                        hoveredRowID = row.id
+                    } else if hoveredRowID == row.id {
+                        hoveredRowID = nil
                     }
                 }
-                .hagoRowBackground(isSelected: isSelected, isHovered: entry.id == hoveredGroupID)
+                .hagoRowBackground(isSelected: isSelected, isHovered: row.id == hoveredRowID)
             }
         } header: {
-            if !entries.isEmpty {
+            if !rows.isEmpty {
                 HStack {
                     Text("Needs a decision")
                     Spacer()
-                    Text("↑ ↓ move · W Work · P Personal · I Ignore · A Accept AI")
+                    Text("↑ ↓ move · → open · W Work · P Personal · I Ignore · A Accept AI")
                         .foregroundStyle(.tertiary)
                 }
             }
         }
     }
 
-    private func rememberOptions(for item: ClassifiedSegment) -> [Rule] {
-        [ActivityKind.work, .personal].flatMap { kind in
+    /// Only offer "Always…" scopes that cover every page in the row.
+    private func rememberOptions(for row: ReviewRow) -> [Rule] {
+        let classifier = ActivityClassifier()
+        return [ActivityKind.work, .personal].flatMap { kind in
             RememberedRuleFactory().rules(
-                from: item,
+                from: row.item,
                 kind: kind,
                 categoryID: appState.categories.first(where: { $0.kind == kind })?.id
             )
         }
+        .filter { rule in
+            row.entries.allSatisfy { classifier.matches(rule: rule, snapshot: $0.item.segment.snapshot) }
+        }
     }
 
-    private func recordingSummary(for group: AggregatedActivity) -> String {
-        if group.segmentCount == 1 {
-            return group.firstStartedAt.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+    private func recordingSummary(for row: ReviewRow) -> String {
+        if row.segmentCount == 1 {
+            return row.firstStartedAt.formatted(.dateTime.month(.abbreviated).day().hour().minute())
         }
-        let first = group.firstStartedAt.formatted(.dateTime.month(.abbreviated).day())
-        let last = group.lastEndedAt.formatted(.dateTime.month(.abbreviated).day())
-        let dateRange = Calendar.current.isDate(group.firstStartedAt, inSameDayAs: group.lastEndedAt)
+        let first = row.firstStartedAt.formatted(.dateTime.month(.abbreviated).day())
+        let last = row.lastEndedAt.formatted(.dateTime.month(.abbreviated).day())
+        let dateRange = Calendar.current.isDate(row.firstStartedAt, inSameDayAs: row.lastEndedAt)
             ? first : "\(first)–\(last)"
-        return "\(group.segmentCount) recordings · \(dateRange)"
+        return "\(row.segmentCount) recordings · \(dateRange)"
     }
 }
-
 private enum ReviewSuggestionChoice {
     static func kind(_ suggestion: ReviewAISuggestion) -> ActivityKind? {
         switch suggestion.kind {
@@ -505,33 +590,45 @@ private enum ReviewSuggestionChoice {
 
 private struct ReviewGroupRow: View {
     @EnvironmentObject private var appState: AppState
-    let entry: ReviewEntry
-    let explanation: String
+    let row: ReviewRow
+    let explanation: String?
     let recordingSummary: String
     let duration: String
     let rememberOptions: [Rule]
+    let isExpanded: Bool?
     let showsActions: Bool
+    let toggleExpanded: () -> Void
     let classify: (ActivityKind) -> Void
     let accept: (ReviewAISuggestion) -> Void
     let remember: (Rule) -> Void
 
-    private var segment: ActivitySegment { entry.item.segment }
+    private var segment: ActivitySegment { row.item.segment }
+    private var isWebsite: Bool { !segment.snapshot.host.isEmpty }
 
     private var title: String {
-        if !segment.snapshot.host.isEmpty { return segment.snapshot.host }
+        if row.isPage {
+            return segment.windowTitle.isEmpty ? segment.url ?? segment.appName : segment.windowTitle
+        }
+        if isWebsite { return segment.snapshot.host }
+        if row.isGroup { return segment.appName }
         return segment.windowTitle.isEmpty ? segment.appName : segment.windowTitle
     }
 
     private var meta: String {
+        if row.isPage { return recordingSummary }
         var parts: [String] = []
         if title != segment.appName { parts.append(segment.appName) }
-        if !segment.windowTitle.isEmpty, title != segment.windowTitle { parts.append(segment.windowTitle) }
+        if row.isGroup {
+            parts.append("\(row.entries.count) \(isWebsite ? "pages" : "windows")")
+        } else if !segment.windowTitle.isEmpty, title != segment.windowTitle {
+            parts.append(segment.windowTitle)
+        }
         parts.append(recordingSummary)
         return parts.joined(separator: " · ")
     }
 
     private var showsExplanation: Bool {
-        explanation.hasPrefix("Conflicting rules")
+        explanation?.hasPrefix("Conflicting rules") == true
     }
 
     private var tooltip: String {
@@ -540,33 +637,50 @@ private struct ReviewGroupRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            AppIconView(bundleIdentifier: segment.snapshot.bundleIdentifier, size: 30)
+            if row.isPage {
+                Color.clear.frame(width: 58, height: 1)
+            } else {
+                Button(action: toggleExpanded) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded == true ? 90 : 0))
+                        .frame(width: 16, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(isExpanded == nil ? 0 : 1)
+                .disabled(isExpanded == nil)
+                .accessibilityLabel(isExpanded == true ? "Hide \(isWebsite ? "pages" : "windows")" : "Show \(isWebsite ? "pages" : "windows")")
+
+                AppIconView(bundleIdentifier: segment.snapshot.bundleIdentifier, size: 30)
+            }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.headline)
+                    .font(row.isPage ? .body : .headline)
                     .lineLimit(1)
                     .truncationMode(.middle)
 
                 Text(meta)
-                    .font(.callout)
+                    .font(row.isPage ? .caption : .callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
-                if showsExplanation {
+                if showsExplanation, let explanation {
                     Text(explanation)
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .lineLimit(1)
                 }
 
-                if segment.snapshot.isDiscordWithoutTitle {
+                if !row.isGroup, segment.snapshot.isDiscordWithoutTitle {
                     Text("Channel titles were not captured. Your choice applies only to these recordings.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                if let suggestion = entry.suggestion {
+                if let suggestion = row.suggestion {
                     SuggestionLine(suggestion: suggestion)
                 }
             }
@@ -583,12 +697,12 @@ private struct ReviewGroupRow: View {
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 40, alignment: .trailing)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, row.isPage ? 2 : 6)
     }
 
     private var actions: some View {
         HStack(spacing: 6) {
-            if let suggestion = entry.suggestion,
+            if let suggestion = row.suggestion,
                ReviewSuggestionChoice.canAccept(suggestion),
                let kind = ReviewSuggestionChoice.kind(suggestion) {
                 Button {

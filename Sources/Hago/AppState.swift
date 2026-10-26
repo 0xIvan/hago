@@ -14,9 +14,15 @@ final class AppState: ObservableObject {
     @Published var todaySummary = DaySummary.empty(on: Date())
     @Published var todayTimeline: [ClassifiedSegment] = []
     @Published var reviewSegments: [ClassifiedSegment] = [] {
-        didSet { reviewGroups = ActivityAggregation.reviewGroups(from: reviewSegments) }
+        didSet {
+            reviewGroups = ActivityAggregation.reviewGroups(from: reviewSegments)
+            reviewSubjectCount = Set(reviewSegments.lazy
+                .filter { $0.classification.kind == .review }
+                .map { ActivityAggregation.reviewSubjectKey(for: $0.segment.snapshot) }).count
+        }
     }
     @Published private(set) var reviewGroups: [AggregatedActivity] = []
+    @Published private(set) var reviewSubjectCount = 0
     @Published var reviewAISuggestions: [ReviewAISuggestion] = []
     @Published var reviewAIAnalysisState = ReviewAIAnalysisState.idle
     @Published var reviewAISettings: ReviewAISettings
@@ -792,14 +798,16 @@ final class AppState: ObservableObject {
         }
     }
 
-    func classifyReviewGroup(_ group: AggregatedActivity, as kind: ActivityKind) {
+    func classifyReview(segmentIDs: [UUID], as kind: ActivityKind) {
         guard flushTracking() else { return }
-        guard reviewSegments.contains(where: { group.segmentIDs.contains($0.id) }) else { return }
+        let ids = Set(segmentIDs)
+        guard reviewSegments.contains(where: { ids.contains($0.id) }) else { return }
         let categoryID = categories.first { $0.kind == kind }?.id
 
         do {
-            _ = try store?.correctSegments(ids: group.segmentIDs, kind: kind, categoryID: categoryID)
-            correctionMessage = kind == .ignored ? "Selected recordings removed permanently." : "Selected recordings updated. Remember a scope separately to teach Hago."
+            _ = try store?.correctSegments(ids: segmentIDs, kind: kind, categoryID: categoryID)
+            let recordings = "\(segmentIDs.count) recording\(segmentIDs.count == 1 ? "" : "s")"
+            correctionMessage = kind == .ignored ? "Removed \(recordings) permanently." : "Marked \(recordings) as \(kind.displayName)."
 
             try refresh()
             clearReviewAISuggestions()
