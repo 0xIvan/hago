@@ -801,8 +801,7 @@ final class AppState: ObservableObject {
 
     func undoLastReviewAIRun() {
         guard let run = lastReviewAIRunSummary,
-              run.status == .completed,
-              run.automaticallyAppliedCount > 0 else {
+              run.canUndo else {
             return
         }
 

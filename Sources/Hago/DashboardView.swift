@@ -860,7 +860,7 @@ private struct ReviewTab: View {
                 } else if let run {
                     Label("AI filed \(run.automaticallyAppliedCount) automatically", systemImage: "sparkles")
                     Button("View") { inspectingRun = run }
-                    if run.status == .completed {
+                    if run.canUndo {
                         Button("Undo") { appState.undoLastReviewAIRun() }
                     }
                 }

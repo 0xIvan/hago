@@ -51,6 +51,11 @@ public struct ReviewAIRunSummary: Identifiable, Equatable, Codable, Sendable {
         self.recommendationCount = recommendationCount
         self.status = status
     }
+
+    /// A failed run only has applied changes when it was recovered after a crash in an older version.
+    public var canUndo: Bool {
+        (status == .completed || status == .failed) && automaticallyAppliedCount > 0
+    }
 }
 
 public enum ReviewAIAppliedRuleState: String, Codable, Sendable {

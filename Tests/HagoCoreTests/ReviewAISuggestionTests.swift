@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import HagoCore
 
@@ -257,6 +258,42 @@ struct ReviewAISuggestionTests {
 
         let secondUndo = try store.undoReviewAIRun(id: summary.id)
         #expect(secondUndo == ReviewAIUndoResult(revertedRuleCount: 0, unchangedRuleCount: 0, conflictCount: 0))
+    }
+
+    @Test
+    func automaticRunThatFailsPartwayLeavesHistoryUntouched() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = try HagoStore(databaseURL: url)
+        try saveReviewSegment(classifiedSegment(url: "https://github.com/openai/codex").segment, in: store)
+        try saveReviewSegment(classifiedSegment(url: "https://linear.app/team").segment, in: store)
+
+        var connection: OpaquePointer?
+        #expect(sqlite3_open(url.path, &connection) == SQLITE_OK)
+        defer { sqlite3_close(connection) }
+        #expect(sqlite3_exec(connection, """
+            CREATE TRIGGER fail_second_decision BEFORE INSERT ON review_ai_decisions
+            WHEN (SELECT COUNT(*) FROM review_ai_decisions) >= 1
+            BEGIN SELECT RAISE(ABORT, 'disk full'); END
+            """, nil, nil, nil) == SQLITE_OK)
+
+        #expect(throws: (any Error).self) {
+            try store.processReviewAISuggestions(
+                [
+                    suggestion(kind: .work, confidence: 0.99,
+                               condition: RuleCondition(field: .host, operation: .equals, value: "github.com")),
+                    suggestion(kind: .work, confidence: 0.99,
+                               condition: RuleCondition(field: .host, operation: .equals, value: "linear.app"))
+                ],
+                harness: .codex,
+                harnessVersion: "codex 1.0",
+                automaticallyApply: true
+            )
+        }
+
+        #expect(try store.reviewSegments().count == 2)
+        #expect(try store.loadRules().allSatisfy { $0.conditions.first?.value != "github.com" })
+        #expect(try store.mostRecentReviewAIRun()?.status == .failed)
     }
 
     @Test

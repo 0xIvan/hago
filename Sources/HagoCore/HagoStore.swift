@@ -107,6 +107,7 @@ public final class HagoStore {
             try execute("PRAGMA foreign_keys = ON")
             try migrateVersioned(databaseURL: databaseURL)
             try ensurePerformanceIndexes()
+            try recoverInterruptedReviewAIRuns()
             rulesDidChange()
         } catch {
             sqlite3_close(connection)
@@ -819,6 +820,49 @@ public final class HagoStore {
     ) throws -> ReviewAIRunSummary {
         let runID = UUID()
         let createdAt = Date()
+        do {
+            // One transaction, so a crash or failure never leaves history changed without the audit Undo needs.
+            return try transaction {
+                try insertReviewAIRun(id: runID, createdAt: createdAt, harness: harness, harnessVersion: harnessVersion,
+                                      decisionCount: suggestions.count, status: .running)
+                return try applyReviewAIRun(
+                    id: runID, createdAt: createdAt, suggestions: suggestions, harness: harness,
+                    harnessVersion: harnessVersion, automaticallyApply: automaticallyApply,
+                    maximumAutomaticRules: maximumAutomaticRules
+                )
+            }
+        } catch {
+            try? insertReviewAIRun(id: runID, createdAt: createdAt, harness: harness, harnessVersion: harnessVersion,
+                                   decisionCount: suggestions.count, status: .failed)
+            throw error
+        }
+    }
+
+    /// Before runs were one transaction, a crash could leave one marked running with its changes applied.
+    /// Marking it failed with its real count makes it undoable again.
+    private func recoverInterruptedReviewAIRuns() throws {
+        try execute(
+            """
+            UPDATE review_ai_runs
+            SET status = ?, automatically_applied_count = (
+                SELECT COUNT(*) FROM review_ai_decisions
+                WHERE run_id = review_ai_runs.id AND disposition IN (?, ?)
+            )
+            WHERE status = ?
+            """,
+            bindings: [
+                .text(ReviewAIRunStatus.failed.rawValue),
+                .text(ReviewAIDecisionDisposition.automaticallyApplied.rawValue),
+                .text(ReviewAIDecisionDisposition.pendingAutomaticApply.rawValue),
+                .text(ReviewAIRunStatus.running.rawValue)
+            ]
+        )
+    }
+
+    private func insertReviewAIRun(
+        id: UUID, createdAt: Date, harness: ReviewAIHarnessKind, harnessVersion: String?,
+        decisionCount: Int, status: ReviewAIRunStatus
+    ) throws {
         try execute(
             """
             INSERT INTO review_ai_runs (
@@ -827,110 +871,107 @@ public final class HagoStore {
             ) VALUES (?, ?, ?, ?, 1, ?, 0, 0, ?)
             """,
             bindings: [
-                .text(runID.uuidString),
+                .text(id.uuidString),
                 .double(createdAt.timeIntervalSince1970),
                 .text(harness.rawValue),
                 .text(harnessVersion),
-                .integer(suggestions.count),
-                .text(ReviewAIRunStatus.running.rawValue)
+                .integer(decisionCount),
+                .text(status.rawValue)
             ]
         )
+    }
 
+    private func applyReviewAIRun(
+        id runID: UUID, createdAt: Date, suggestions: [ReviewAISuggestion], harness: ReviewAIHarnessKind,
+        harnessVersion: String?, automaticallyApply: Bool, maximumAutomaticRules: Int
+    ) throws -> ReviewAIRunSummary {
         let validator = ReviewAISuggestionValidator()
         var automaticallyAppliedCount = 0
 
-        do {
-            for suggestion in suggestions {
-                var disposition = ReviewAIDecisionDisposition.recommended
+        for suggestion in suggestions {
+            var disposition = ReviewAIDecisionDisposition.recommended
 
-                if automaticallyApply, automaticallyAppliedCount < maximumAutomaticRules {
-                    switch validator.automaticValidationResult(for: suggestion) {
-                    case .applyAllowed:
-                        guard let plan = try reviewAISuggestionApplyPlan(suggestion) else {
-                            try recordReviewAIDecision(
-                                runID: runID,
-                                suggestion: suggestion,
-                                disposition: .stale,
-                                audit: ReviewAIAuditDecision()
-                            )
-                            continue
-                        }
-                        guard try automaticReviewPlanPreservesClassifiedActivity(plan) else {
-                            try recordReviewAIDecision(
-                                runID: runID, suggestion: suggestion, disposition: .recommended,
-                                audit: ReviewAIAuditDecision()
-                            )
-                            continue
-                        }
-                        let audit = ReviewAIAuditDecision(
-                            ruleID: plan.rule.id,
-                            ruleChange: plan.ruleChange,
-                            condition: plan.condition,
-                            appliedKind: plan.appliedKind
-                        )
-                        let decisionID = try recordReviewAIDecision(
+            if automaticallyApply, automaticallyAppliedCount < maximumAutomaticRules {
+                switch validator.automaticValidationResult(for: suggestion) {
+                case .applyAllowed:
+                    guard let plan = try reviewAISuggestionApplyPlan(suggestion) else {
+                        try recordReviewAIDecision(
                             runID: runID,
                             suggestion: suggestion,
-                            disposition: .pendingAutomaticApply,
-                            audit: audit
+                            disposition: .stale,
+                            audit: ReviewAIAuditDecision()
                         )
-                        if try applyReviewAISuggestion(plan) != nil {
-                            automaticallyAppliedCount += 1
-                            try updateReviewAIDecision(
-                                id: decisionID,
-                                disposition: .automaticallyApplied
-                            )
-                        } else {
-                            try updateReviewAIDecision(id: decisionID, disposition: .stale)
-                        }
                         continue
-                    case .manualOnly:
-                        disposition = .recommended
-                    case .rejected:
-                        disposition = .rejected
                     }
+                    guard try automaticReviewPlanPreservesClassifiedActivity(plan) else {
+                        try recordReviewAIDecision(
+                            runID: runID, suggestion: suggestion, disposition: .recommended,
+                            audit: ReviewAIAuditDecision()
+                        )
+                        continue
+                    }
+                    let audit = ReviewAIAuditDecision(
+                        ruleID: plan.rule.id,
+                        ruleChange: plan.ruleChange,
+                        condition: plan.condition,
+                        appliedKind: plan.appliedKind
+                    )
+                    let decisionID = try recordReviewAIDecision(
+                        runID: runID,
+                        suggestion: suggestion,
+                        disposition: .pendingAutomaticApply,
+                        audit: audit
+                    )
+                    if try applyReviewAISuggestion(plan) != nil {
+                        automaticallyAppliedCount += 1
+                        try updateReviewAIDecision(
+                            id: decisionID,
+                            disposition: .automaticallyApplied
+                        )
+                    } else {
+                        try updateReviewAIDecision(id: decisionID, disposition: .stale)
+                    }
+                    continue
+                case .manualOnly:
+                    disposition = .recommended
+                case .rejected:
+                    disposition = .rejected
                 }
-
-                try recordReviewAIDecision(
-                    runID: runID,
-                    suggestion: suggestion,
-                    disposition: disposition,
-                    audit: ReviewAIAuditDecision()
-                )
             }
 
-            let recommendationCount = suggestions.count - automaticallyAppliedCount
-            try execute(
-                """
-                UPDATE review_ai_runs
-                SET automatically_applied_count = ?, recommendation_count = ?, status = ?
-                WHERE id = ?
-                """,
-                bindings: [
-                    .integer(automaticallyAppliedCount),
-                    .integer(recommendationCount),
-                    .text(ReviewAIRunStatus.completed.rawValue),
-                    .text(runID.uuidString)
-                ]
+            try recordReviewAIDecision(
+                runID: runID,
+                suggestion: suggestion,
+                disposition: disposition,
+                audit: ReviewAIAuditDecision()
             )
-
-            return ReviewAIRunSummary(
-                id: runID,
-                createdAt: createdAt,
-                harness: harness,
-                harnessVersion: harnessVersion,
-                decisionCount: suggestions.count,
-                automaticallyAppliedCount: automaticallyAppliedCount,
-                recommendationCount: recommendationCount,
-                status: .completed
-            )
-        } catch {
-            try? execute(
-                "UPDATE review_ai_runs SET status = ? WHERE id = ?",
-                bindings: [.text(ReviewAIRunStatus.failed.rawValue), .text(runID.uuidString)]
-            )
-            throw error
         }
+
+        let recommendationCount = suggestions.count - automaticallyAppliedCount
+        try execute(
+            """
+            UPDATE review_ai_runs
+            SET automatically_applied_count = ?, recommendation_count = ?, status = ?
+            WHERE id = ?
+            """,
+            bindings: [
+                .integer(automaticallyAppliedCount),
+                .integer(recommendationCount),
+                .text(ReviewAIRunStatus.completed.rawValue),
+                .text(runID.uuidString)
+            ]
+        )
+
+        return ReviewAIRunSummary(
+            id: runID,
+            createdAt: createdAt,
+            harness: harness,
+            harnessVersion: harnessVersion,
+            decisionCount: suggestions.count,
+            automaticallyAppliedCount: automaticallyAppliedCount,
+            recommendationCount: recommendationCount,
+            status: .completed
+        )
     }
 
     public func mostRecentReviewAIRun(appliedRulesOnly: Bool = false) throws -> ReviewAIRunSummary? {
@@ -1007,6 +1048,10 @@ public final class HagoStore {
     }
 
     public func undoReviewAIRun(id: UUID) throws -> ReviewAIUndoResult {
+        try transaction { try undoReviewAIRunWithinTransaction(id: id) }
+    }
+
+    private func undoReviewAIRunWithinTransaction(id: UUID) throws -> ReviewAIUndoResult {
         let currentStatus = try query(
             "SELECT status FROM review_ai_runs WHERE id = ? LIMIT 1",
             bindings: [.text(id.uuidString)]
@@ -2262,14 +2307,16 @@ public final class HagoStore {
         return String(String.UnicodeScalarView(scalars))
     }
 
-    private func transaction(_ work: () throws -> Void) throws {
+    @discardableResult
+    private func transaction<T>(_ work: () throws -> T) throws -> T {
         let savepoint = "hago_\(transactionDepth)"
         transactionDepth += 1
         defer { transactionDepth -= 1 }
         try execute("SAVEPOINT \(savepoint)")
         do {
-            try work()
+            let result = try work()
             try execute("RELEASE SAVEPOINT \(savepoint)")
+            return result
         } catch {
             rulesDidChange()
             try? execute("ROLLBACK TO SAVEPOINT \(savepoint)")
