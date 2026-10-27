@@ -1265,7 +1265,6 @@ private struct AppliedReviewRulesView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appState: AppState
     @State private var details: [ReviewAIAppliedRule] = []
-    @State private var editingRule: Rule?
 
     let run: ReviewAIRunSummary
 
@@ -1293,82 +1292,64 @@ private struct AppliedReviewRulesView: View {
                 .keyboardShortcut(.defaultAction)
             }
 
-            List {
-                ForEach(details) { detail in
-                    HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(detail.currentRule?.name ?? detail.appliedCondition.value)
-                            .font(.headline)
-                        Text("\(detail.appliedCondition.field.displayName) \(detail.appliedCondition.operation.displayName) \(detail.appliedCondition.value)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            List(details) { detail in
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title(for: detail))
+                            .font(.body.weight(.medium))
                             .lineLimit(1)
+                            .truncationMode(.middle)
                         Text(detail.reason)
-                            .font(.caption)
+                            .font(.callout)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
-                        HStack(spacing: 8) {
-                            Text("\(Int((detail.confidence * 100).rounded()))% confidence")
-                            Text(detail.appliedKind.displayName)
-                            Text(stateLabel(detail.state))
-                                .foregroundStyle(detail.state == .unchanged ? Color.secondary : Color.orange)
+                        if let note = note(for: detail.state) {
+                            Text(note)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                     }
-
-                    Spacer()
-
-                    if let rule = detail.currentRule {
-                        Button(rule.enabled ? "Disable" : "Enable") {
-                            var updatedRule = rule
-                            updatedRule.enabled.toggle()
-                            appState.saveRule(updatedRule, reclassify: .today)
+                    Spacer(minLength: 12)
+                    Text(detail.appliedKind.displayName)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(detail.appliedKind.tint)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(detail.appliedKind.tint.opacity(0.14), in: Capsule())
+                    if detail.state == .unchanged, let rule = detail.currentRule {
+                        Button("Undo") {
+                            appState.deleteRule(id: rule.id, reclassify: .allHistory)
                             reload()
                         }
-                        Button("Edit") {
-                            editingRule = rule
-                        }
+                        .help("Send this back to Review")
                     }
-                    }
-                    .padding(.vertical, 5)
                 }
+                .padding(.vertical, 6)
             }
         }
         .padding()
-        .frame(minWidth: 760, minHeight: 480)
+        .frame(minWidth: 560, minHeight: 360)
         .onAppear(perform: reload)
-        .sheet(item: $editingRule) { rule in
-            RuleEditorView(
-                rule: rule,
-                projects: appState.projects,
-                categories: appState.categories,
-                onDelete: { deletedRule, scope in
-                    appState.deleteRule(id: deletedRule.id, reclassify: scope)
-                    reload()
-                },
-                onSave: { savedRule, scope in
-                    appState.saveRule(savedRule, reclassify: scope)
-                    reload()
-                }
-            )
-            .environmentObject(appState)
+    }
+
+    private func title(for detail: ReviewAIAppliedRule) -> String {
+        appState.summary(for: detail.currentRule ?? Rule(
+            name: "", priority: 0, enabled: true, isBuiltIn: false,
+            action: RuleAction(kind: detail.appliedKind, categoryID: nil, projectID: nil),
+            conditions: [detail.appliedCondition]
+        ))
+    }
+
+    private func note(for state: ReviewAIAppliedRuleState) -> String? {
+        switch state {
+        case .unchanged: nil
+        case .changed: "You've changed this rule since."
+        case .removed: "Removed. Its time goes back to Review unless another rule files it."
         }
     }
 
     private func reload() {
         details = appState.appliedReviewAIRules(for: run.id)
-    }
-
-    private func stateLabel(_ state: ReviewAIAppliedRuleState) -> String {
-        switch state {
-        case .unchanged:
-            "Unchanged"
-        case .changed:
-            "Changed after analysis"
-        case .removed:
-            "Removed"
-        }
     }
 }
 
