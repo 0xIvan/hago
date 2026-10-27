@@ -307,10 +307,17 @@ private struct NowCard: View {
                 }
                 Spacer(minLength: 0)
             } else {
-                Image(systemName: "hourglass")
+                Image(systemName: appState.idleReason.symbol)
+                    .font(.system(size: 22))
                     .foregroundStyle(.secondary)
-                Text("Waiting for your first activity")
-                    .foregroundStyle(.secondary)
+                    .frame(width: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(appState.idleReason.title)
+                        .font(.headline)
+                    Text(appState.idleReason.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer(minLength: 0)
             }
         }

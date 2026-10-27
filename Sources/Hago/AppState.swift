@@ -78,6 +78,8 @@ final class AppState: ObservableObject {
     private var lifecycleObservers: [(NotificationCenter, NSObjectProtocol)] = []
     private var suspensionReasons: Set<String> = []
     @Published var isTrackingPaused = false
+    /// Why nothing is being recorded right now, when tracking is on but the snapshot is empty.
+    @Published private(set) var idleReason = IdleReason.starting
     @Published private(set) var isAway = false
     @Published var awayAfterMinutes = UserDefaults.standard.object(forKey: AppState.awayAfterMinutesKey) as? Int ?? 10 {
         didSet { UserDefaults.standard.set(awayAfterMinutes, forKey: Self.awayAfterMinutesKey) }
@@ -1293,15 +1295,16 @@ final class AppState: ObservableObject {
             captureTask = nil
             guard !isTrackingPaused, suspensionReasons.isEmpty else { return }
             let foregroundPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            let inHago = foregroundPID == ProcessInfo.processInfo.processIdentifier
             // Time spent looking at Hago itself is neither work nor personal.
             let valid = snapshot.flatMap {
-                $0.processIdentifier == foregroundPID && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier ? $0 : nil
+                $0.processIdentifier == foregroundPID && !inHago ? $0 : nil
             }
-            recordObservation(valid)
+            recordObservation(valid, inHago: inHago)
         }
     }
 
-    private func recordObservation(_ snapshot: ActivitySnapshot?) {
+    private func recordObservation(_ snapshot: ActivitySnapshot?, inHago: Bool = false) {
         let classification = snapshot.map { classifier.classify(snapshot: $0, preparedRules: preparedRules) }
         var retained = classification?.kind == .ignored ? nil : snapshot
         if classification?.kind == .review, snapshot?.isSignInPage == true {
@@ -1312,6 +1315,9 @@ final class AppState: ObservableObject {
         let touchesReview = currentClassification?.kind == .review || classification?.kind == .review
         currentSnapshot = retained
         currentClassification = classification
+        if retained == nil {
+            idleReason = inHago ? .inHago : classification?.kind == .ignored ? .notRecorded : .unavailable
+        }
         enqueue(recorder.observe(retained, at: Date(), uptime: ProcessInfo.processInfo.systemUptime))
         let saved = persistCheckpoints()
         if saved && contextChanged && touchesReview {
@@ -1372,4 +1378,38 @@ struct CorrectionNotice {
     let text: String
     var canUndo = true
     let date = Date()
+}
+
+enum IdleReason {
+    case starting
+    case inHago
+    case notRecorded
+    case unavailable
+
+    var title: String {
+        switch self {
+        case .starting: "Starting"
+        case .inHago: "You're in Hago"
+        case .notRecorded: "Not recorded"
+        case .unavailable: "Can't see the window in front"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .starting: "Hago starts counting in a moment."
+        case .inHago: "Time here isn't counted."
+        case .notRecorded: "It's private or on your Never record list."
+        case .unavailable: "Check Permissions in Privacy."
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .starting: "hourglass"
+        case .inHago: "eye.slash"
+        case .notRecorded: "eye.slash"
+        case .unavailable: "questionmark.circle"
+        }
+    }
 }

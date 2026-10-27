@@ -162,11 +162,17 @@ struct MenuBarContentView: View {
                 subtitle: snapshot.windowTitle
             )
             .help(snapshot.url ?? snapshot.windowTitle)
+        } else if appState.isAway {
+            activityLabel(
+                icon: Image(systemName: "moon.zzz.fill").font(.system(size: 18)).foregroundStyle(.secondary),
+                title: "Away",
+                subtitle: "Hago picks up when you're back"
+            )
         } else {
             activityLabel(
-                icon: Image(systemName: "hourglass").font(.system(size: 18)).foregroundStyle(.secondary),
-                title: "Waiting for activity",
-                subtitle: ""
+                icon: Image(systemName: appState.idleReason.symbol).font(.system(size: 18)).foregroundStyle(.secondary),
+                title: appState.idleReason.title,
+                subtitle: appState.idleReason.detail
             )
         }
     }
