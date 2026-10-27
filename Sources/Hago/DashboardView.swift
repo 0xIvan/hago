@@ -424,12 +424,17 @@ private struct WeekCard: View {
 
     private let formatter = TimeFormatting()
 
+    /// Every column shares one scale, so a day past the goal rises above the others' tracks.
+    private var scale: TimeInterval {
+        max(dailyGoal, week.buckets.map(\.totalSeconds).max() ?? 0, 1)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("This Week")
                     .font(.headline)
-                Text("\(formatter.compactDuration(week.workSeconds)) of \(formatter.compactDuration(weeklyGoal)) work · \(formatter.compactDuration(week.totalSeconds)) tracked")
+                Text("\(formatter.compactDuration(week.totalSeconds)) of \(formatter.compactDuration(weeklyGoal)) · \(formatter.compactDuration(week.workSeconds)) work")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -439,7 +444,7 @@ private struct WeekCard: View {
 
             HStack(alignment: .bottom, spacing: 12) {
                 ForEach(week.buckets) { bucket in
-                    WeekDayColumn(bucket: bucket, goal: dailyGoal)
+                    WeekDayColumn(bucket: bucket, goal: dailyGoal, scale: scale)
                 }
             }
         }
@@ -447,46 +452,77 @@ private struct WeekCard: View {
     }
 }
 
-/// Each day is a track as tall as the daily work goal, filled by that day's work.
+/// Each day's track is as tall as the daily goal and fills with everything tracked that day,
+/// stacked work, personal, then not filed. Time past the goal rises above the track.
 private struct WeekDayColumn: View {
     let bucket: ReportBucket
     let goal: TimeInterval
+    let scale: TimeInterval
+
+    private static let height: CGFloat = 104
 
     private var isToday: Bool {
         let now = Date()
         return bucket.startDate <= now && now < bucket.endDate
     }
 
-    private var fraction: Double {
-        goal > 0 ? min(bucket.workSeconds / goal, 1) : 0
+    private var reachedGoal: Bool { goal > 0 && bucket.totalSeconds >= goal }
+
+    private var parts: [(kind: ActivityKind, seconds: TimeInterval)] {
+        [(.work, bucket.workSeconds), (.personal, bucket.personalSeconds), (.review, bucket.reviewSeconds)]
+            .filter { $0.seconds > 0 }
+    }
+
+    private func height(_ seconds: TimeInterval) -> CGFloat {
+        Self.height * seconds / scale
+    }
+
+    private var summary: String {
+        let shares = parts.map { "\(HagoDuration.text($0.seconds)) \($0.kind == .review ? "not filed" : $0.kind.displayName.lowercased())" }
+        let percent = goal > 0 ? Int((bucket.totalSeconds / goal * 100).rounded()) : 0
+        return "\(HagoDuration.text(bucket.totalSeconds)) of \(HagoDuration.text(goal)), \(percent)%"
+            + (shares.isEmpty ? "" : ". " + shares.joined(separator: ", "))
     }
 
     var body: some View {
         VStack(spacing: 7) {
-            Text(bucket.workSeconds >= 60 ? HagoDuration.text(bucket.workSeconds) : " ")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(fraction >= 1 ? AnyShapeStyle(ActivityKind.work.tint) : AnyShapeStyle(.secondary))
-            GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(HagoPalette.track)
+                    .frame(height: height(goal))
                 VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    Rectangle()
-                        .fill(ActivityKind.work.tint.gradient)
-                        .frame(height: geometry.size.height * fraction)
+                    ForEach(parts.reversed(), id: \.kind) { part in
+                        Rectangle()
+                            .fill(part.kind.tint)
+                            .frame(height: height(part.seconds))
+                    }
                 }
-                .frame(maxWidth: .infinity)
-                .background(HagoPalette.track)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                if reachedGoal, bucket.totalSeconds > goal {
+                    Rectangle()
+                        .fill(.background.opacity(0.85))
+                        .frame(height: 2)
+                        .offset(y: -height(goal) + 1)
+                }
             }
             .frame(maxWidth: 40)
-            .frame(height: 96)
+            .frame(height: Self.height, alignment: .bottom)
+            .overlay(alignment: .bottom) {
+                Text(bucket.totalSeconds >= 60 ? HagoDuration.text(bucket.totalSeconds) : " ")
+                    .font(.caption2.monospacedDigit().weight(reachedGoal ? .semibold : .regular))
+                    .foregroundStyle(reachedGoal ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                    .fixedSize()
+                    .offset(y: -max(height(goal), height(bucket.totalSeconds)) - 6)
+            }
+            .padding(.top, 18)
             Text(bucket.startDate.formatted(.dateTime.weekday(.abbreviated)))
                 .font(.caption.weight(isToday ? .bold : .regular))
                 .foregroundStyle(isToday ? AnyShapeStyle(HagoPalette.work) : AnyShapeStyle(.secondary))
         }
         .frame(maxWidth: .infinity)
-        .help("\(bucket.startDate.formatted(.dateTime.weekday(.wide).day().month())): \(HagoDuration.text(bucket.workSeconds)) of \(HagoDuration.text(goal)) work, \(Int((fraction * 100).rounded()))%")
+        .help("\(bucket.startDate.formatted(.dateTime.weekday(.wide).day().month())): \(summary)")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(bucket.startDate.formatted(.dateTime.weekday(.wide))), \(HagoDuration.text(bucket.workSeconds)) of \(HagoDuration.text(goal)) work")
+        .accessibilityLabel("\(bucket.startDate.formatted(.dateTime.weekday(.wide))), \(summary)")
     }
 }
 

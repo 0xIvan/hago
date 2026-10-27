@@ -296,6 +296,10 @@ public struct ReportBucket: Identifiable, Equatable, Sendable {
         self.personalSeconds = personalSeconds
         self.reviewSeconds = reviewSeconds
     }
+
+    public var totalSeconds: TimeInterval {
+        workSeconds + personalSeconds + reviewSeconds
+    }
 }
 
 public struct ReportSummary: Equatable, Sendable {
