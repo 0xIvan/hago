@@ -82,6 +82,18 @@ final class AppState: ObservableObject {
     @Published var awayAfterMinutes = UserDefaults.standard.object(forKey: AppState.awayAfterMinutesKey) as? Int ?? 10 {
         didSet { UserDefaults.standard.set(awayAfterMinutes, forKey: Self.awayAfterMinutesKey) }
     }
+    @Published var dayStartHour = HagoCalendar.shared.dayCutoffHour {
+        didSet {
+            UserDefaults.standard.set(dayStartHour, forKey: HagoCalendar.dayStartHourKey)
+            reload()
+        }
+    }
+    @Published var dailyWorkGoalHours = UserDefaults.standard.object(forKey: AppState.dailyWorkGoalKey) as? Double ?? 8 {
+        didSet { UserDefaults.standard.set(dailyWorkGoalHours, forKey: Self.dailyWorkGoalKey) }
+    }
+    @Published var weeklyWorkGoalHours = UserDefaults.standard.object(forKey: AppState.weeklyWorkGoalKey) as? Double ?? 40 {
+        didSet { UserDefaults.standard.set(weeklyWorkGoalHours, forKey: Self.weeklyWorkGoalKey) }
+    }
     @Published var trackingErrorMessage: String?
     @Published var loginItemStatus = SMAppService.mainApp.status
     @Published var loginItemError: String?
@@ -93,6 +105,8 @@ final class AppState: ObservableObject {
     private let pollInterval: TimeInterval = 5
     private static let accessibilityRequestedKey = "hago.accessibilityPermissionRequested"
     private static let awayAfterMinutesKey = "hago.awayAfterMinutes"
+    private static let dailyWorkGoalKey = "hago.dailyWorkGoalHours"
+    private static let weeklyWorkGoalKey = "hago.weeklyWorkGoalHours"
 
     init() {
         if UserDefaults.standard.bool(forKey: Self.accessibilityRequestedKey) {
@@ -699,6 +713,11 @@ final class AppState: ObservableObject {
         errorMessage = nil
     }
 
+    var hasDirectAICredential: Bool {
+        let harness = reviewAISettings.selectedHarness
+        return harness.isDirectProvider && (try? ReviewAICredentialStore().read(for: harness)) != nil
+    }
+
     func disconnectDirectAI() throws {
         stopReviewAIAnalysis()
         try ReviewAICredentialStore().remove(for: reviewAISettings.selectedHarness)
@@ -925,6 +944,7 @@ final class AppState: ObservableObject {
         guard flushTracking(), let store else { return }
         do {
             try store.deleteAllActivity()
+            Task { await SiteIcons.shared.removeAll() }
             recorder = ActivityRecorder()
             pendingCheckpoints.removeAll()
             correctionMessage = nil

@@ -1,4 +1,5 @@
 import AppKit
+import HagoCore
 import ServiceManagement
 import SwiftUI
 
@@ -10,6 +11,9 @@ struct TrackingSettingsView: View {
         Form {
             Section("Tracking") {
                 TrackingRows()
+            }
+            Section("Your day") {
+                DayRows()
             }
             UpdateSettingsSection(updater: appState.updater)
             Section("Setup") {
@@ -68,6 +72,48 @@ private struct TrackingRows: View {
         if let error = appState.loginItemError {
             Text(error).foregroundStyle(.red)
         }
+    }
+}
+
+private struct DayRows: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Picker(selection: $appState.dayStartHour) {
+            ForEach(HagoCalendar.dayStartHours, id: \.self) { hour in
+                Text(Self.hourText(hour)).tag(hour)
+            }
+        } label: {
+            Text("Day starts at")
+            Text("Late nights count toward the day before until this time.")
+        }
+        LabeledContent {
+            Stepper(value: $appState.dailyWorkGoalHours, in: 1...16, step: 0.5) {
+                Text(Self.hoursText(appState.dailyWorkGoalHours)).monospacedDigit()
+            }
+            .fixedSize()
+        } label: {
+            Text("Work goal per day")
+            Text("Each day in This Week fills up toward it.")
+        }
+        LabeledContent {
+            Stepper(value: $appState.weeklyWorkGoalHours, in: 1...100, step: 1) {
+                Text(Self.hoursText(appState.weeklyWorkGoalHours)).monospacedDigit()
+            }
+            .fixedSize()
+        } label: {
+            Text("Work goal per week")
+            Text("Reports show your work time against it.")
+        }
+    }
+
+    private static func hourText(_ hour: Int) -> String {
+        hour == 0 ? "Midnight" : Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: Date())?
+            .formatted(date: .omitted, time: .shortened) ?? "\(hour):00"
+    }
+
+    private static func hoursText(_ hours: Double) -> String {
+        HagoDuration.text(hours * 3_600)
     }
 }
 

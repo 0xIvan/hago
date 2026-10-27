@@ -9,7 +9,7 @@ struct RingArc: Equatable {
     var trackedSeconds: TimeInterval
 }
 
-/// The Hago day, 4am to 4am, drawn as a ring that starts at the top like the app icon.
+/// The Hago day, from one day start to the next, drawn as a ring that starts at the top like the app icon.
 /// Time still ahead is dotted; hovering a block hands it to `center`.
 struct DayRing<Center: View>: View {
     let day: DateInterval

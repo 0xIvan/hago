@@ -167,7 +167,11 @@ private struct OverviewTab: View {
                         TopItemsCard(kind: .personal, summary: summary, timeline: appState.todayTimeline)
                     }
                     if let week {
-                        WeekCard(week: week) { appState.selectedSection = .reports }
+                        WeekCard(
+                            week: week,
+                            dailyGoal: appState.dailyWorkGoalHours * 3_600,
+                            weeklyGoal: appState.weeklyWorkGoalHours * 3_600
+                        ) { appState.selectedSection = .reports }
                     }
                 }
                 .padding(20)
@@ -414,20 +418,18 @@ private struct TopItemsCard: View {
 
 private struct WeekCard: View {
     let week: ReportSummary
+    let dailyGoal: TimeInterval
+    let weeklyGoal: TimeInterval
     let openReports: () -> Void
 
     private let formatter = TimeFormatting()
-
-    private var scale: TimeInterval {
-        max(4 * 3_600, week.buckets.map(\.total).max() ?? 0)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("This Week")
                     .font(.headline)
-                Text("\(formatter.compactDuration(week.totalSeconds)) tracked · \(formatter.compactDuration(week.workSeconds)) work")
+                Text("\(formatter.compactDuration(week.workSeconds)) of \(formatter.compactDuration(weeklyGoal)) work · \(formatter.compactDuration(week.totalSeconds)) tracked")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -437,7 +439,7 @@ private struct WeekCard: View {
 
             HStack(alignment: .bottom, spacing: 12) {
                 ForEach(week.buckets) { bucket in
-                    WeekDayColumn(bucket: bucket, scale: scale)
+                    WeekDayColumn(bucket: bucket, goal: dailyGoal)
                 }
             }
         }
@@ -445,26 +447,31 @@ private struct WeekCard: View {
     }
 }
 
+/// Each day is a track as tall as the daily work goal, filled by that day's work.
 private struct WeekDayColumn: View {
     let bucket: ReportBucket
-    let scale: TimeInterval
+    let goal: TimeInterval
 
     private var isToday: Bool {
         let now = Date()
         return bucket.startDate <= now && now < bucket.endDate
     }
 
+    private var fraction: Double {
+        goal > 0 ? min(bucket.workSeconds / goal, 1) : 0
+    }
+
     var body: some View {
         VStack(spacing: 7) {
-            Text(bucket.total > 0 ? HagoDuration.text(bucket.total) : " ")
+            Text(bucket.workSeconds >= 60 ? HagoDuration.text(bucket.workSeconds) : " ")
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(fraction >= 1 ? AnyShapeStyle(ActivityKind.work.tint) : AnyShapeStyle(.secondary))
             GeometryReader { geometry in
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
-                    segment(bucket.reviewSeconds, .review, height: geometry.size.height)
-                    segment(bucket.personalSeconds, .personal, height: geometry.size.height)
-                    segment(bucket.workSeconds, .work, height: geometry.size.height)
+                    Rectangle()
+                        .fill(ActivityKind.work.tint.gradient)
+                        .frame(height: geometry.size.height * fraction)
                 }
                 .frame(maxWidth: .infinity)
                 .background(HagoPalette.track)
@@ -477,18 +484,10 @@ private struct WeekDayColumn: View {
                 .foregroundStyle(isToday ? AnyShapeStyle(HagoPalette.work) : AnyShapeStyle(.secondary))
         }
         .frame(maxWidth: .infinity)
-        .help(bucket.startDate.formatted(.dateTime.weekday(.wide).day().month()))
+        .help("\(bucket.startDate.formatted(.dateTime.weekday(.wide).day().month())): \(HagoDuration.text(bucket.workSeconds)) of \(HagoDuration.text(goal)) work, \(Int((fraction * 100).rounded()))%")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(bucket.startDate.formatted(.dateTime.weekday(.wide))), \(HagoDuration.text(bucket.workSeconds)) of \(HagoDuration.text(goal)) work")
     }
-
-    private func segment(_ seconds: TimeInterval, _ kind: ActivityKind, height: CGFloat) -> some View {
-        Rectangle()
-            .fill(kind.tint.gradient)
-            .frame(height: height * min(seconds / scale, 1))
-    }
-}
-
-private extension ReportBucket {
-    var total: TimeInterval { workSeconds + personalSeconds + reviewSeconds }
 }
 
 private struct ReviewEntry: Identifiable {
@@ -1515,7 +1514,7 @@ private struct RecentActivityTab: View {
         }
     }
 
-    /// A recording that runs past 4am is listed on both days, so totals count only this day's part.
+    /// A recording that runs past the day start is listed on both days, so totals count only this day's part.
     private func secondsInDay(_ item: ClassifiedSegment) -> TimeInterval {
         let day = calendar.dayInterval(containing: appState.activityDate)
         return max(0, min(item.segment.endedAt, day.end).timeIntervalSince(max(item.segment.startedAt, day.start)))

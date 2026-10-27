@@ -1,13 +1,19 @@
 import Foundation
 
 public struct HagoCalendar: Sendable {
-    public static let shared = HagoCalendar()
+    public static let dayStartHourKey = "hago.dayStartHour"
+    public static let dayStartHours = 0...8
 
-    public var dayCutoffHour: Int {
-        4
+    /// Read on each use so a new day start applies everywhere at once.
+    public static var shared: HagoCalendar {
+        HagoCalendar(dayCutoffHour: UserDefaults.standard.object(forKey: dayStartHourKey) as? Int ?? 4)
     }
 
-    public init() {}
+    public let dayCutoffHour: Int
+
+    public init(dayCutoffHour: Int = 4) {
+        self.dayCutoffHour = min(max(dayCutoffHour, Self.dayStartHours.lowerBound), Self.dayStartHours.upperBound)
+    }
 
     public func lastDayLabel(before end: Date, calendar: Calendar = .current) -> Date {
         let lastDay = dayInterval(containing: end.addingTimeInterval(-1), calendar: calendar).start

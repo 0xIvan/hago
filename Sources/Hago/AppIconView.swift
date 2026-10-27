@@ -9,7 +9,7 @@ struct AppIconView: View {
     let placeholderSymbol: String
     @State private var favicon: NSImage?
 
-    /// With a host, shows the site icon from Chrome's local cache when macOS allows reading it, otherwise a monogram.
+    /// With a host, shows the site's own icon once downloaded, and a monogram until then or when there is none.
     init(bundleIdentifier: String, host: String? = nil, size: CGFloat = 28, placeholderSymbol: String = "app.dashed") {
         self.bundleIdentifier = bundleIdentifier
         self.host = host
@@ -50,7 +50,7 @@ struct AppIconView: View {
         .task(id: host) {
             favicon = nil
             guard let host, !host.isEmpty else { return }
-            favicon = await ChromeFavicons.shared.iconData(for: host).flatMap(NSImage.init(data:))
+            favicon = await SiteIcons.shared.icon(for: host).flatMap(NSImage.init(data:))
         }
     }
 }

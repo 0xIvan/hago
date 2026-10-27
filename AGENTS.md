@@ -6,7 +6,7 @@
 - Hago is a native macOS menu bar app built with SwiftPM in the Hago source repository.
 - The installed local app is `/Applications/Hago.app`.
 - The local SQLite database is `~/Library/Application Support/Hago/hago.sqlite`.
-- The app is fully local; do not add remote analytics, sync, or telemetry unless explicitly requested.
+- The app is fully local; do not add remote analytics, sync, or telemetry unless explicitly requested. The only network requests are update checks, AI the user connects, and site icons fetched from each site itself.
 
 ## Verification and Install
 - For app source changes, completion includes testing, reinstalling, and reopening the local app. Do not wait for a separate install request.
@@ -25,7 +25,7 @@
 - If unrelated uncommitted changes exist, do not overwrite or revert them. Work around them and mention them.
 
 ## Product Rules
-- Hago day starts at local 4am.
+- Hago day starts at local 4am by default; users can move it between midnight and 8am in General.
 - Review should represent the full review backlog, not just today.
 - Review classification should create/reuse remembered rules and reclassify all history so review can move toward zero.
 - Activity is the editable raw activity surface.

@@ -536,68 +536,166 @@ struct RulesManagementView: View {
 
 struct ProjectsSettingsView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var weekTotals: [String: TimeInterval] = [:]
+    @State private var monthTotals: [String: TimeInterval] = [:]
+
+    private var active: [Project] { appState.projects.filter { !$0.isArchived } }
+    private var archived: [Project] { appState.projects.filter(\.isArchived) }
 
     var body: some View {
-        let activeCount = appState.projects.filter { !$0.isArchived }.count
         VStack(spacing: 0) {
             PageTop {
                 PageHeader(
-                    title: "\(activeCount) active project\(activeCount == 1 ? "" : "s")",
-                    subtitle: "Assign a project in a rule to see its time in Reports. Archived projects keep their history."
+                    title: "Projects",
+                    subtitle: "Track time per client or product. A rule assigns the project, and Reports adds it up."
                 ) {
                     Button {
-                        appState.saveProject(Project(name: "New Project", colorHex: "#2563EB", isArchived: false))
+                        appState.saveProject(Project(
+                            name: "New Project",
+                            colorHex: SwatchPalette.next(after: appState.projects.map(\.colorHex)),
+                            isArchived: false
+                        ))
                     } label: {
-                        Label("Add Project", systemImage: "plus")
+                        Label("New Project", systemImage: "plus")
                     }
                     .buttonStyle(.borderedProminent)
                 }
             }
 
-            List(appState.projects) { project in
-                ProjectEditorRow(project: project)
-                    .environmentObject(appState)
+            if appState.projects.isEmpty {
+                ContentUnavailableView(
+                    "No projects yet",
+                    systemImage: "folder",
+                    description: Text("Add a project, then pick it in a rule so its time shows up in Reports.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 14)], spacing: 14) {
+                            ForEach(active) { project in
+                                ProjectCard(
+                                    project: project,
+                                    week: weekTotals[project.name] ?? 0,
+                                    month: monthTotals[project.name] ?? 0,
+                                    ruleCount: appState.rules.filter { $0.action.projectID == project.id }.count
+                                )
+                                .id(project.id)
+                            }
+                        }
+                        if !archived.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Archived")
+                                    .font(.headline)
+                                Text("Archived projects keep their history but can't be picked in rules.")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                ForEach(archived) { project in
+                                    HStack(spacing: 10) {
+                                        Circle().fill(Color(hex: project.colorHex) ?? .accentColor).frame(width: 10, height: 10)
+                                        Text(project.name)
+                                        Spacer()
+                                        Button("Restore") {
+                                            var restored = project
+                                            restored.isArchived = false
+                                            appState.saveProject(restored)
+                                        }
+                                    }
+                                    .padding(.vertical, 6)
+                                }
+                            }
+                            .hagoCard(padding: 14)
+                        }
+                    }
+                    .padding(20)
+                }
             }
-            .listStyle(.inset)
         }
+        .task(id: appState.projects.map(\.name)) {
+            weekTotals = projectTotals(.week)
+            monthTotals = projectTotals(.month)
+        }
+    }
+
+    private func projectTotals(_ period: ReportPeriodKind) -> [String: TimeInterval] {
+        let buckets = appState.loadReportPair(for: period, containing: Date())?.current.topProjects ?? []
+        return Dictionary(buckets.map { ($0.name, $0.seconds) }, uniquingKeysWith: +)
     }
 }
 
-private struct ProjectEditorRow: View {
+private struct ProjectCard: View {
     @EnvironmentObject private var appState: AppState
     @State private var project: Project
     @State private var autosaveTask: Task<Void, Never>?
+    let week: TimeInterval
+    let month: TimeInterval
+    let ruleCount: Int
 
-    init(project: Project) {
+    init(project: Project, week: TimeInterval, month: TimeInterval, ruleCount: Int) {
         _project = State(initialValue: project)
+        self.week = week
+        self.month = month
+        self.ruleCount = ruleCount
     }
 
+    private var color: Color { Color(hex: project.colorHex) ?? .accentColor }
+
     var body: some View {
-        HStack {
-            TextField("Name", text: $project.name)
-            ColorInputView(colorHex: $project.colorHex)
-            Toggle("Archived", isOn: $project.isArchived)
-                .frame(width: 120)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                ColorSwatchButton(colorHex: $project.colorHex)
+                TextField("Name", text: $project.name)
+                    .textFieldStyle(.plain)
+                    .font(.headline)
+                Menu {
+                    Button("Archive") { project.isArchived = true }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 18) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(week > 0 ? HagoDuration.text(week) : "0m")
+                        .font(.hagoNumber(24))
+                        .foregroundStyle(week > 0 ? AnyShapeStyle(color) : AnyShapeStyle(.tertiary))
+                    Text("this week").font(.caption).foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(month > 0 ? HagoDuration.text(month) : "0m")
+                        .font(.hagoNumber(24))
+                        .foregroundStyle(month > 0 ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                    Text("this month").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Text(ruleCount == 0 ? "No rule assigns it yet. Pick it in a rule under Rules." : "Assigned by \(ruleCount) rule\(ruleCount == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
-        .onChange(of: project) { _, updatedProject in
-            scheduleAutosave(updatedProject)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .hagoCard(padding: 16)
+        .overlay(alignment: .leading) {
+            UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16, style: .continuous)
+                .fill(color)
+                .frame(width: 4)
+        }
+        .onChange(of: project) { _, updated in
+            autosaveTask?.cancel()
+            if updated.isArchived {
+                appState.saveProject(updated)
+                return
+            }
+            autosaveTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
+                appState.saveProject(updated)
+            }
         }
         .onDisappear {
             autosaveTask?.cancel()
             appState.saveProject(project)
-        }
-    }
-
-    private func scheduleAutosave(_ updatedProject: Project) {
-        autosaveTask?.cancel()
-        autosaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else {
-                return
-            }
-
-            appState.saveProject(updatedProject)
         }
     }
 }
@@ -609,97 +707,168 @@ struct CategoriesSettingsView: View {
         VStack(spacing: 0) {
             PageTop {
                 PageHeader(
-                    title: "\(appState.categories.count) categor\(appState.categories.count == 1 ? "y" : "ies")",
-                    subtitle: "Each category counts toward Work or Personal time."
+                    title: "Categories",
+                    subtitle: "Split Work and Personal into finer groups, like Meetings or Learning. Rules decide which category activity lands in."
                 ) {
-                    Button {
-                        appState.saveCategory(HagoCore.Category(name: "New Category", kind: .work, colorHex: "#2563EB"))
-                    } label: {
-                        Label("Add Category", systemImage: "plus")
-                    }
-                    .buttonStyle(.borderedProminent)
+                    EmptyView()
                 }
             }
-
-            List(appState.categories) { category in
-                CategoryEditorRow(category: category)
-                    .environmentObject(appState)
+            ScrollView {
+                HStack(alignment: .top, spacing: 16) {
+                    CategoryGroup(kind: .work)
+                    CategoryGroup(kind: .personal)
+                }
+                .padding(20)
             }
-            .listStyle(.inset)
         }
     }
 }
 
-private struct CategoryEditorRow: View {
+private struct CategoryGroup: View {
     @EnvironmentObject private var appState: AppState
-    @State private var category: HagoCore.Category
-    @State private var autosaveTask: Task<Void, Never>?
+    let kind: ActivityKind
 
-    init(category: HagoCore.Category) {
-        _category = State(initialValue: category)
+    private var categories: [HagoCore.Category] {
+        appState.categories.filter { $0.kind == kind }
     }
 
     var body: some View {
-        HStack {
-            TextField("Name", text: $category.name)
-            Picker("Kind", selection: $category.kind) {
-                ForEach(ActivityKind.allCases.filter { $0 != .ignored }) { kind in
-                    Text(kind.displayName).tag(kind)
-                }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 3).fill(kind.tint).frame(width: 12, height: 12)
+                Text(kind.displayName).font(.headline)
+                Spacer()
+                Text("\(categories.count)")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
-            .frame(width: 180)
-            ColorInputView(colorHex: $category.colorHex)
+            .padding(.bottom, 8)
+            ForEach(categories) { category in
+                CategoryRow(category: category, ruleCount: appState.rules.filter { $0.action.categoryID == category.id }.count)
+                    .id(category.id)
+                Divider()
+            }
+            Button {
+                appState.saveCategory(HagoCore.Category(
+                    name: "New category",
+                    kind: kind,
+                    colorHex: SwatchPalette.next(after: appState.categories.map(\.colorHex))
+                ))
+            } label: {
+                Label("Add \(kind.displayName) category", systemImage: "plus")
+            }
+            .buttonStyle(.borderless)
+            .padding(.top, 8)
         }
-        .padding(.vertical, 4)
-        .onChange(of: category) { _, updatedCategory in
-            scheduleAutosave(updatedCategory)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .hagoCard(padding: 16)
+    }
+}
+
+private struct CategoryRow: View {
+    @EnvironmentObject private var appState: AppState
+    @State private var category: HagoCore.Category
+    @State private var autosaveTask: Task<Void, Never>?
+    let ruleCount: Int
+
+    init(category: HagoCore.Category, ruleCount: Int) {
+        _category = State(initialValue: category)
+        self.ruleCount = ruleCount
+    }
+
+    private var otherKind: ActivityKind { category.kind == .work ? .personal : .work }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ColorSwatchButton(colorHex: $category.colorHex)
+            TextField("Name", text: $category.name)
+                .textFieldStyle(.plain)
+            Text(ruleCount == 0 ? "No rules" : "\(ruleCount) rule\(ruleCount == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Menu {
+                Button("Move to \(otherKind.displayName)") { category.kind = otherKind }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+        .padding(.vertical, 6)
+        .onChange(of: category) { old, updated in
+            autosaveTask?.cancel()
+            if old.kind != updated.kind {
+                appState.saveCategory(updated)
+                return
+            }
+            autosaveTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
+                appState.saveCategory(updated)
+            }
         }
         .onDisappear {
             autosaveTask?.cancel()
             appState.saveCategory(category)
         }
     }
+}
 
-    private func scheduleAutosave(_ updatedCategory: HagoCore.Category) {
-        autosaveTask?.cancel()
-        autosaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else {
-                return
-            }
+private enum SwatchPalette {
+    static let colors = [
+        "#2563EB", "#7C3AED", "#DB2777", "#DC2626", "#EA580C", "#D97706",
+        "#16A34A", "#0D9488", "#0891B2", "#475569", "#9A5A2F", "#0A496E"
+    ]
 
-            appState.saveCategory(updatedCategory)
-        }
+    static func next(after used: [String]) -> String {
+        let used = Set(used.map { $0.uppercased() })
+        return colors.first { !used.contains($0) } ?? colors[used.count % colors.count]
     }
 }
 
-private struct ColorInputView: View {
+/// A colour dot that opens a small palette, with the system colour panel for anything else.
+private struct ColorSwatchButton: View {
     @Binding var colorHex: String
-
-    private var color: Color {
-        Color(hex: colorHex) ?? .accentColor
-    }
+    @State private var isPresented = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            ColorPicker(
-                "Color",
-                selection: Binding(
-                    get: { color },
-                    set: { newColor in
-                        if let hex = newColor.hexString {
+        Button { isPresented = true } label: {
+            Circle()
+                .fill(Color(hex: colorHex) ?? .accentColor)
+                .frame(width: 16, height: 16)
+                .overlay(Circle().strokeBorder(.black.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .help("Change colour")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 12) {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(22), spacing: 8), count: 6), spacing: 8) {
+                    ForEach(SwatchPalette.colors, id: \.self) { hex in
+                        Button {
                             colorHex = hex
+                            isPresented = false
+                        } label: {
+                            Circle()
+                                .fill(Color(hex: hex) ?? .accentColor)
+                                .frame(width: 22, height: 22)
+                                .overlay {
+                                    if hex.caseInsensitiveCompare(colorHex) == .orderedSame {
+                                        Image(systemName: "checkmark")
+                                            .font(.caption.bold())
+                                            .foregroundStyle(.white)
+                                    }
+                                }
                         }
+                        .buttonStyle(.plain)
                     }
-                ),
-                supportsOpacity: false
-            )
-            .labelsHidden()
-            .fixedSize()
-
-            TextField("Color", text: $colorHex)
-                .font(.body.monospaced())
-                .frame(width: 94)
+                }
+                ColorPicker("Other colour", selection: Binding(
+                    get: { Color(hex: colorHex) ?? .accentColor },
+                    set: { if let hex = $0.hexString { colorHex = hex } }
+                ), supportsOpacity: false)
+            }
+            .padding(14)
         }
     }
 }
@@ -781,6 +950,21 @@ struct PrivacySettingsView: View {
     @State private var editingRule: Rule?
     @State private var confirmsDeleteAll = false
     @State private var exportMessage: String?
+    @State private var query = ""
+    @State private var filter = IgnoreFilter.all
+    @State private var showsAll = false
+    @State private var siteIconsEnabled = SiteIcons.isEnabled
+
+    private static let collapsedCount = 8
+
+    private var shownRules: [Rule] {
+        let needle = query.trimmingCharacters(in: .whitespaces)
+        return ignoreRules.filter { rule in
+            filter.includes(rule) && (needle.isEmpty
+                || IgnoreRuleRow.title(for: rule).localizedCaseInsensitiveContains(needle)
+                || IgnoreRuleRow.detail(for: rule).localizedCaseInsensitiveContains(needle))
+        }
+    }
 
     private var ignoreRules: [Rule] {
         appState.rules
@@ -794,6 +978,8 @@ struct PrivacySettingsView: View {
 
     var body: some View {
         Form {
+            neverRecord
+            yourData
             Section {
                 LabeledContent {
                     if appState.accessibilityTrusted {
@@ -819,68 +1005,18 @@ struct PrivacySettingsView: View {
                 Label("Incognito and private browser windows are never recorded.", systemImage: "eye.slash")
                 Label("Chrome windows are checked before recording. Safari and other browsers count as app time only, never sites or titles.", systemImage: "safari")
                 Label("Everything stays on this Mac. AI suggestions only send data when you connect a provider.", systemImage: "lock")
-            }
-
-            Section {
-                if ignoreRules.isEmpty {
-                    Text("Nothing here yet. Add an app, website, or window title Hago should never record.")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(ignoreRules) { rule in
-                    IgnoreRuleRow(
-                        rule: rule,
-                        edit: { editingRule = rule },
-                        setEnabled: { enabled in
-                            var updatedRule = rule
-                            updatedRule.enabled = enabled
-                            appState.saveRule(updatedRule, reclassify: .today)
-                        },
-                        delete: { appState.deleteRule(id: rule.id, reclassify: .today) }
-                    )
-                }
-            } header: {
-                HStack {
-                    Text("Never record")
-                    Spacer()
-                    Menu {
-                        Button("An App…") { addIgnoreRule(field: .bundleIdentifier, operation: .equals) }
-                        Button("A Website…") { addIgnoreRule(field: .host, operation: .domain) }
-                        Button("A Page…") { addIgnoreRule(field: .url, operation: .equals) }
-                        Button("Window Titles…") { addIgnoreRule(field: .windowTitle, operation: .contains) }
-                    } label: {
-                        Label("Add", systemImage: "plus")
+                Toggle(isOn: Binding(
+                    get: { siteIconsEnabled },
+                    set: { enabled in
+                        siteIconsEnabled = enabled
+                        UserDefaults.standard.set(enabled, forKey: SiteIcons.enabledKey)
+                        Task { await SiteIcons.shared.removeAll() }
                     }
-                    .fixedSize()
+                )) {
+                    Text("Show site icons")
+                    Text("Downloads each site's icon once, from that site, with no cookies. Off shows letters instead.")
                 }
-            } footer: {
-                Text("Matching activity is never saved and wins over every other rule.")
-            }
-
-            Section {
-                LabeledContent {
-                    Button("Export CSV…", action: exportCSV)
-                } label: {
-                    Text("Export")
-                    Text(exportMessage ?? "Every recording with its time, kind, project, app, title and address.")
-                }
-                if let backups = appState.backups {
-                    LabeledContent {
-                        Button("Show in Finder") {
-                            NSWorkspace.shared.activateFileViewerSelecting([backups.databaseURL])
-                        }
-                    } label: {
-                        Text("Database and backups")
-                        Text("A copy is kept each day for the last \(backups.keeping) days in Backups/Daily beside the database.")
-                    }
-                }
-                LabeledContent {
-                    Button("Delete All…", role: .destructive) { confirmsDeleteAll = true }
-                } label: {
-                    Text("Delete recorded time")
-                    Text("Rules, projects and settings stay.")
-                }
-            } header: {
-                Text("Your data")
+                .toggleStyle(.switch)
             }
         }
         .formStyle(.grouped)
@@ -907,6 +1043,105 @@ struct PrivacySettingsView: View {
         }
     }
 
+    private var neverRecord: some View {
+        Section {
+            if ignoreRules.isEmpty {
+                Text("Nothing here yet. Add an app, website, or window title Hago should never record.")
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 10) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Search", text: $query)
+                            .textFieldStyle(.plain)
+                        if !query.isEmpty {
+                            Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    Picker("Show", selection: $filter) {
+                        ForEach(IgnoreFilter.allCases) { filter in
+                            Text(filter.title).tag(filter)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                let shown = shownRules
+                if shown.isEmpty {
+                    Text("No matches.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(showsAll || !query.isEmpty ? shown : Array(shown.prefix(Self.collapsedCount))) { rule in
+                    IgnoreRuleRow(
+                        rule: rule,
+                        edit: { editingRule = rule },
+                        setEnabled: { enabled in
+                            var updatedRule = rule
+                            updatedRule.enabled = enabled
+                            appState.saveRule(updatedRule, reclassify: .today)
+                        },
+                        delete: { appState.deleteRule(id: rule.id, reclassify: .today) }
+                    )
+                }
+                if query.isEmpty, shown.count > Self.collapsedCount {
+                    Button(showsAll ? "Show fewer" : "Show all \(shown.count)") { showsAll.toggle() }
+                        .buttonStyle(.link)
+                }
+            }
+        } header: {
+            HStack {
+                Text("Never record")
+                Spacer()
+                Menu {
+                    Button("An App…") { addIgnoreRule(field: .bundleIdentifier, operation: .equals) }
+                    Button("A Website…") { addIgnoreRule(field: .host, operation: .domain) }
+                    Button("A Page…") { addIgnoreRule(field: .url, operation: .equals) }
+                    Button("Window Titles…") { addIgnoreRule(field: .windowTitle, operation: .contains) }
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .fixedSize()
+            }
+        } footer: {
+            Text("\(ignoreRules.count) rule\(ignoreRules.count == 1 ? "" : "s"). Matching activity is never saved and wins over every other rule.")
+        }
+    }
+
+    private var yourData: some View {
+        Section {
+            LabeledContent {
+                Button("Export CSV…", action: exportCSV)
+            } label: {
+                Text("Export")
+                Text(exportMessage ?? "Every recording with its time, kind, project, app, title and address.")
+            }
+            if let backups = appState.backups {
+                LabeledContent {
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([backups.databaseURL])
+                    }
+                } label: {
+                    Text("Database and backups")
+                    Text("A copy is kept each day for the last \(backups.keeping) days in Backups/Daily beside the database.")
+                }
+            }
+            LabeledContent {
+                Button("Delete All…", role: .destructive) { confirmsDeleteAll = true }
+            } label: {
+                Text("Delete recorded time")
+                Text("Rules, projects and settings stay.")
+            }
+        } header: {
+            Text("Your data")
+        }
+    }
+
     private func addIgnoreRule(field: RuleField, operation: RuleOperation) {
         editingRule = Rule(
             name: "",
@@ -916,6 +1151,33 @@ struct PrivacySettingsView: View {
             action: RuleAction(kind: .ignored, categoryID: nil, projectID: nil),
             conditions: [RuleCondition(field: field, operation: operation, value: "")]
         )
+    }
+}
+
+private enum IgnoreFilter: String, CaseIterable, Identifiable {
+    case all, apps, sites, titles, off
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .apps: "Apps"
+        case .sites: "Sites"
+        case .titles: "Titles"
+        case .off: "Off"
+        }
+    }
+
+    func includes(_ rule: Rule) -> Bool {
+        let field = rule.conditions.first?.field
+        switch self {
+        case .all: return true
+        case .apps: return field == .bundleIdentifier || field == .appName
+        case .sites: return field == .host || field == .url
+        case .titles: return field == .windowTitle
+        case .off: return !rule.enabled
+        }
     }
 }
 
@@ -938,7 +1200,9 @@ private struct IgnoreRuleRow: View {
         rule.conditions.first
     }
 
-    private var detail: String {
+    private var detail: String { Self.detail(for: rule) }
+
+    static func detail(for rule: Rule) -> String {
         var parts = [RuleDescription.summary(for: rule)]
         if let scope = RuleScope(conditions: rule.conditions) {
             parts = [scope.summary(appName: { DetectedWorkApp.application(withID: $0)?.name ?? $0 })]
@@ -987,7 +1251,9 @@ private struct IgnoreRuleRow: View {
         switch condition?.field {
         case .bundleIdentifier:
             AppIconView(bundleIdentifier: condition?.value ?? "", size: 22)
-        case .host, .url:
+        case .host:
+            AppIconView(bundleIdentifier: "", host: condition?.value, size: 22, placeholderSymbol: "globe")
+        case .url:
             Image(systemName: "globe").foregroundStyle(.secondary)
         case .appName:
             Image(systemName: "app").foregroundStyle(.secondary)

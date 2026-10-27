@@ -44,7 +44,7 @@ struct ReportsView: View {
                         reportMetrics(reportPair.current, previous: reportPair.previous)
 
                         SectionPanel(title: mode.chartTitle) {
-                            ReportPeriodChart(report: reportPair.current, mode: mode)
+                            ReportPeriodChart(report: reportPair.current, mode: mode, goalHours: bucketGoalHours)
                                 .id([reportPair.current.startDate, reportPair.current.endDate])
                                 .frame(height: 260)
                         }
@@ -94,7 +94,7 @@ struct ReportsView: View {
             StatCard(
                 title: "Work",
                 value: formatter.compactDuration(report.workSeconds),
-                detail: durationDelta(report.workSeconds, previous.workSeconds),
+                detail: "\(goalProgress(report)) · \(durationDelta(report.workSeconds, previous.workSeconds))",
                 color: ActivityKind.work.tint
             )
             StatCard(
@@ -117,6 +117,18 @@ struct ReportsView: View {
             )
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// A day's goal in Weeks, where each bar is a day; a week's goal in Months, where each bar is a week.
+    private var bucketGoalHours: Double {
+        mode == .weeks ? appState.dailyWorkGoalHours : appState.weeklyWorkGoalHours
+    }
+
+    private func goalProgress(_ report: ReportSummary) -> String {
+        let weeks = report.endDate.timeIntervalSince(report.startDate) / (7 * 86_400)
+        let goal = appState.weeklyWorkGoalHours * 3_600 * weeks
+        guard goal > 0 else { return "" }
+        return "\(percent(report.workSeconds / goal)) of \(formatter.compactDuration(goal)) goal"
     }
 
     private func reloadReport() {
@@ -202,6 +214,7 @@ private enum ReportMode: String, CaseIterable, Identifiable {
 private struct ReportPeriodChart: View {
     var report: ReportSummary
     var mode: ReportMode
+    var goalHours: Double
 
     @State private var selectedBucketID: Date?
     @State private var tooltipX: CGFloat?
@@ -213,9 +226,9 @@ private struct ReportPeriodChart: View {
     }
 
     private var maximumHours: Double {
-        ChartScale.maximumHours(
+        max(ChartScale.maximumHours(
             for: report.buckets.map { $0.workSeconds + $0.personalSeconds + $0.reviewSeconds }
-        )
+        ), ceil(goalHours))
     }
 
     var body: some View {
@@ -239,6 +252,15 @@ private struct ReportPeriodChart: View {
                 )
                 .foregroundStyle(by: .value("Type", ActivityKind.review.displayName))
             }
+
+            RuleMark(y: .value("Work goal", goalHours))
+                .foregroundStyle(ActivityKind.work.tint.opacity(0.7))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                .annotation(position: .top, alignment: .trailing) {
+                    Text("Work goal \(HagoDuration.text(goalHours * 3_600))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
 
             if let selectedBucket,
                let index = report.buckets.firstIndex(where: { $0.id == selectedBucket.id }) {
