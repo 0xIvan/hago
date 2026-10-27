@@ -14,6 +14,7 @@ struct RuleEditorView: View {
     @State private var projectIDValue: String
     @State private var reclassificationScope: ReclassificationScope?
     @State private var matchSummary: RuleMatchSummary?
+    @State private var deletesPastRecordings = true
 
     var rule: Rule
     var projects: [Project]
@@ -97,6 +98,122 @@ struct RuleEditorView: View {
     }
 
     var body: some View {
+        Group {
+            if lockedKind == .ignored && !usesCustomConditions {
+                neverRecordBody
+            } else {
+                ruleBody
+            }
+        }
+        .task(id: conditions.map { "\($0.field.rawValue):\($0.operation.rawValue):\($0.value)" }) {
+            matchSummary = nil
+            guard canSave else { return }
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            matchSummary = appState.ruleMatchSummary(Rule(
+                name: "", priority: rule.priority, enabled: true, isBuiltIn: false,
+                action: rule.action, conditions: conditions
+            ))
+        }
+    }
+
+    /// Never record has one job, so it gets its own plain sheet: what to skip, and what to do
+    /// with recordings already saved. Matching history is deleted, so that choice is spelled out.
+    private var neverRecordBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(isNew ? "Never Record" : "Edit Never Record")
+                    .font(.title2.weight(.semibold))
+                Text("Hago won't save any time spent here.")
+                    .foregroundStyle(.secondary)
+            }
+            .padding([.horizontal, .top], 20)
+
+            Form {
+                Section {
+                    Picker("Type", selection: Binding(
+                        get: { scope.target },
+                        set: { target in
+                            guard target != scope.target else { return }
+                            scope = RuleScope(target: target)
+                        }
+                    )) {
+                        ForEach(RuleTarget.allCases.filter { $0 != .page || scope.target == .page }) { target in
+                            Text(target.displayName).tag(target)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    switch scope.target {
+                    case .app:
+                        LabeledContent("App") {
+                            AppChooser(bundleIdentifier: $scope.value)
+                        }
+                    case .website:
+                        WebsiteField(value: $scope.value)
+                        Toggle("Include subdomains", isOn: $scope.includesSubdomains)
+                    case .page:
+                        TextField("Page address", text: $scope.value, prompt: Text("https://github.com/acme/project"))
+                        Toggle("Include pages under this address", isOn: $scope.includesSubpages)
+                    case .title:
+                        LabeledContent("Window title") {
+                            HStack(spacing: 8) {
+                                TitleMatchPicker(selection: $scope.titleMatch)
+                                TextField("Window title", text: $scope.value, prompt: Text("Dashlane"))
+                                    .labelsHidden()
+                                    .frame(width: 200)
+                            }
+                        }
+                    }
+                    if scope.target != .title, !scope.title.isEmpty {
+                        titleField
+                    }
+                } footer: {
+                    Label(scope.isComplete ? scope.summary(appName: appState.appName(for:)) : "Choose what Hago should skip.", systemImage: "eye.slash")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let matchSummary, matchSummary.count > 0 {
+                    Section {
+                        Toggle(
+                            "Delete \(matchSummary.count) past recording\(matchSummary.count == 1 ? "" : "s") (\(HagoDuration.text(matchSummary.seconds)))",
+                            isOn: $deletesPastRecordings
+                        )
+                    } footer: {
+                        Text(deletesPastRecordings ? "They're removed from your history for good." : "They stay in your history.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+
+            HStack {
+                if allowsDelete && !isNew {
+                    Button("Remove Rule", role: .destructive) {
+                        onDelete(rule, .allHistory)
+                        dismiss()
+                    }
+                    .help("Start recording this again. Recordings already deleted don't come back.")
+                }
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+                Button(isNew ? "Never Record" : "Save") {
+                    onSave(updatedRule(), deletesPastRecordings ? .allHistory : nil)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSave)
+            }
+            .padding([.horizontal, .bottom], 20)
+        }
+        .frame(width: 520)
+    }
+
+    private var ruleBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title)
                 .font(.title2.weight(.semibold))
@@ -150,9 +267,9 @@ struct RuleEditorView: View {
 
                 Section {
                     Picker("Past activity", selection: $reclassificationScope) {
-                        Text("Update all history").tag(ReclassificationScope?.some(.allHistory))
-                        Text("Update today only").tag(ReclassificationScope?.some(.today))
-                        Text("Leave unchanged").tag(ReclassificationScope?.none)
+                        Text(lockedKind == .ignored ? "Delete matches from all history" : "Update all history").tag(ReclassificationScope?.some(.allHistory))
+                        Text(lockedKind == .ignored ? "Delete today's matches" : "Update today only").tag(ReclassificationScope?.some(.today))
+                        Text(lockedKind == .ignored ? "Keep them" : "Leave unchanged").tag(ReclassificationScope?.none)
                     }
                     if !isNew {
                         Toggle("Rule is on", isOn: $enabled)
@@ -211,16 +328,6 @@ struct RuleEditorView: View {
             .padding([.horizontal, .bottom], 20)
         }
         .frame(minWidth: 600, maxWidth: 600, minHeight: 400)
-        .task(id: conditions.map { "\($0.field.rawValue):\($0.operation.rawValue):\($0.value)" }) {
-            matchSummary = nil
-            guard canSave else { return }
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else { return }
-            matchSummary = appState.ruleMatchSummary(Rule(
-                name: "", priority: rule.priority, enabled: true, isBuiltIn: false,
-                action: rule.action, conditions: conditions
-            ))
-        }
     }
 
     @ViewBuilder

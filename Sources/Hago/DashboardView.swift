@@ -914,44 +914,63 @@ private struct ReviewTab: View {
         }
     }
 
-    /// One quiet line for what just happened: an undoable choice, AI's automatic filing, or an AI error.
+    /// One quiet line for the latest thing that happened, with at most one action.
     @ViewBuilder
     private var notices: some View {
         let run = appState.lastReviewAIRunSummary.flatMap {
             $0.automaticallyAppliedCount > 0 && $0.createdAt > Date().addingTimeInterval(-86_400) ? $0 : nil
         }
-        let failure: String? = if case .failed(let message) = appState.reviewAIAnalysisState { message } else { nil }
-
-        if failure != nil || appState.correctionMessage != nil || run != nil || appState.lastReviewAIUndoMessage != nil {
-            HStack(spacing: 16) {
-                if let failure {
-                    Label(failure, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                        .lineLimit(1)
-                    Button("Try Again") { appState.analyzeReview() }
-                } else if let message = appState.correctionMessage {
-                    Label(message, systemImage: "checkmark.circle.fill")
-                        .lineLimit(1)
-                    if appState.latestCorrectionActionID != nil {
-                        Button("Undo") { appState.undoLatestCorrection() }
-                    }
-                }
-                Spacer(minLength: 0)
-                if let undoMessage = appState.lastReviewAIUndoMessage {
-                    Text(undoMessage)
-                } else if let run {
-                    Label("AI filed \(run.automaticallyAppliedCount) automatically", systemImage: "sparkles")
-                    Button("View") { inspectingRun = run }
-                    if run.canUndo {
-                        Button("Undo") { appState.undoLastReviewAIRun() }
-                    }
-                }
-            }
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .buttonStyle(.link)
-            .controlSize(.small)
+        let correction = appState.correction.flatMap { correction in
+            run.map { correction.date > $0.createdAt } ?? true ? correction : nil
         }
+
+        if case .failed(let message) = appState.reviewAIAnalysisState {
+            notice(message, systemImage: "exclamationmark.triangle.fill", tint: .red, action: "Try Again") {
+                appState.analyzeReview()
+            }
+        } else if let correction {
+            notice(
+                correction.text,
+                systemImage: "checkmark.circle.fill",
+                action: correction.canUndo && appState.latestCorrectionActionID != nil ? "Undo" : nil
+            ) {
+                appState.undoLatestCorrection()
+            }
+        } else if let undoMessage = appState.lastReviewAIUndoMessage {
+            notice(undoMessage, systemImage: "arrow.uturn.backward.circle.fill")
+        } else if let run {
+            notice(
+                "AI filed \(run.automaticallyAppliedCount) for you",
+                systemImage: "sparkles",
+                action: "See What Changed"
+            ) {
+                inspectingRun = run
+            }
+        }
+    }
+
+    private func notice(
+        _ text: String,
+        systemImage: String,
+        tint: Color = .secondary,
+        action title: String? = nil,
+        perform: @escaping () -> Void = {}
+    ) -> some View {
+        HStack(spacing: 12) {
+            Label {
+                Text(text).foregroundStyle(.secondary)
+            } icon: {
+                Image(systemName: systemImage).foregroundStyle(tint)
+            }
+            .lineLimit(1)
+            .truncationMode(.middle)
+            if let title {
+                Button(title, action: perform)
+                    .buttonStyle(.link)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
     }
 
     private func reviewSection(_ section: ReviewSectionRows, selectedID: String?, rows: [ReviewRow]) -> some View {
@@ -1254,16 +1273,24 @@ private struct AppliedReviewRulesView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Applied Rules")
+                    Text("What AI Filed")
                         .font(.title2.weight(.semibold))
                     Text("\(run.harness.displayName) · \(run.createdAt.formatted(date: .abbreviated, time: .shortened))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if run.canUndo, appState.lastReviewAIUndoMessage == nil, run.id == appState.lastReviewAIRunSummary?.id {
+                    Button("Undo All") {
+                        appState.undoLastReviewAIRun()
+                        dismiss()
+                    }
+                    .help("Put everything this run filed back the way it was")
+                }
                 Button("Done") {
                     dismiss()
                 }
+                .keyboardShortcut(.defaultAction)
             }
 
             List {

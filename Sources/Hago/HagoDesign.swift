@@ -262,15 +262,15 @@ struct CorrectionBanner: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        if let message = appState.correctionMessage {
+        if let correction = appState.correction {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Text(message)
+                Text(correction.text)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if appState.latestCorrectionActionID != nil {
+                if correction.canUndo, appState.latestCorrectionActionID != nil {
                     Button("Undo") { appState.undoLatestCorrection() }
                         .controlSize(.small)
                 }

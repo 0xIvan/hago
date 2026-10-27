@@ -59,7 +59,7 @@ final class AppState: ObservableObject {
     @Published var selectedPresetIDs: Set<String> = []
     @Published var learningSuggestions: [CorrectionLearningSuggestion] = []
     @Published var latestCorrectionActionID: UUID?
-    @Published var correctionMessage: String?
+    @Published var correction: CorrectionNotice?
     private var store: HagoStore?
     private var reviewAIAnalysisService: ReviewAIAnalysisService?
     private var activeReviewIsScheduled = false
@@ -867,9 +867,9 @@ final class AppState: ObservableObject {
             try refresh()
             clearReviewAISuggestions()
             if result.conflictCount == 0 {
-                lastReviewAIUndoMessage = "Undid \(result.revertedRuleCount) automatic rule changes."
+                lastReviewAIUndoMessage = "Undid what AI filed."
             } else {
-                lastReviewAIUndoMessage = "Undid \(result.revertedRuleCount) rule changes; \(result.conflictCount) changed rules were left as they are."
+                lastReviewAIUndoMessage = "Undid what AI filed. \(result.conflictCount) rule\(result.conflictCount == 1 ? " you changed was" : "s you changed were") kept."
             }
             errorMessage = nil
         } catch {
@@ -897,7 +897,7 @@ final class AppState: ObservableObject {
         do {
             _ = try store?.correctSegments(ids: segmentIDs, kind: kind, categoryID: categoryID)
             let recordings = "\(segmentIDs.count) recording\(segmentIDs.count == 1 ? "" : "s")"
-            correctionMessage = kind == .ignored ? "Removed \(recordings) permanently." : "Marked \(recordings) as \(kind.displayName)."
+            correction = CorrectionNotice(text: kind == .ignored ? "Removed \(recordings) permanently." : "Marked \(recordings) as \(kind.displayName).")
 
             try refresh()
             clearReviewAISuggestions()
@@ -917,9 +917,8 @@ final class AppState: ObservableObject {
 
         do {
             _ = try store?.correctSegments(ids: segmentIDs, kind: kind, categoryID: categoryID)
-            correctionMessage = kind == .ignored
-                ? "Removed \(segmentIDs.count) recording\(segmentIDs.count == 1 ? "" : "s") permanently."
-                : "Marked \(segmentIDs.count) recording\(segmentIDs.count == 1 ? "" : "s") as \(kind.displayName)."
+            let recordings = "\(segmentIDs.count) recording\(segmentIDs.count == 1 ? "" : "s")"
+            correction = CorrectionNotice(text: kind == .ignored ? "Removed \(recordings) permanently." : "Marked \(recordings) as \(kind.displayName).")
 
             try refresh()
             clearReviewAISuggestions()
@@ -947,7 +946,7 @@ final class AppState: ObservableObject {
             Task { await SiteIcons.shared.removeAll() }
             recorder = ActivityRecorder()
             pendingCheckpoints.removeAll()
-            correctionMessage = nil
+            correction = nil
             try refresh()
             clearReviewAISuggestions()
             errorMessage = nil
@@ -1024,7 +1023,7 @@ final class AppState: ObservableObject {
         guard flushTracking() else { return }
         do {
             _ = try store?.applyRememberedRule(rule)
-            correctionMessage = "\(summary(for: rule)) is now always \(rule.action.kind.displayName), past recordings included."
+            correction = CorrectionNotice(text: "\(summary(for: rule)) is now \(rule.action.kind.displayName), including past time.")
             try refresh()
             clearReviewAISuggestions()
             errorMessage = nil
@@ -1035,7 +1034,7 @@ final class AppState: ObservableObject {
         guard flushTracking(), let id = latestCorrectionActionID else { return }
         do {
             let count = try store?.undoCorrection(id: id) ?? 0
-            correctionMessage = "Undid the last correction or learned rule (\(count) retained recordings restored). Later choices are preserved."
+            correction = CorrectionNotice(text: "Undone. \(count) recording\(count == 1 ? " is" : "s are") back as before.", canUndo: false)
             try refresh()
             clearReviewAISuggestions()
             errorMessage = nil
@@ -1367,4 +1366,10 @@ enum AccessibilityRequest {
     case waitingForSettings
     case stillOffAfterSettings
     case granted
+}
+
+struct CorrectionNotice {
+    let text: String
+    var canUndo = true
+    let date = Date()
 }
