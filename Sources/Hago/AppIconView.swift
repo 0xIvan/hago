@@ -7,10 +7,13 @@ struct AppIconView: View {
     let host: String?
     let size: CGFloat
     let placeholderSymbol: String
+    let downloadsIcon: Bool
     @State private var favicon: NSImage?
 
     /// With a host, shows the site's own icon once downloaded, and a monogram until then or when there is none.
-    init(bundleIdentifier: String, host: String? = nil, size: CGFloat = 28, placeholderSymbol: String = "app.dashed") {
+    /// `downloadsIcon: false` shows only an icon already saved, for sites the user asked never to record.
+    init(bundleIdentifier: String, host: String? = nil, size: CGFloat = 28, placeholderSymbol: String = "app.dashed", downloadsIcon: Bool = true) {
+        self.downloadsIcon = downloadsIcon
         self.bundleIdentifier = bundleIdentifier
         self.host = host
         self.size = size
@@ -28,7 +31,7 @@ struct AppIconView: View {
                 Image(nsImage: favicon)
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: size * 0.5, height: size * 0.5)
+                    .frame(width: size * 0.6, height: size * 0.6)
                     .frame(width: size * 0.8, height: size * 0.8)
                     .background(.white, in: tile)
                     .overlay(tile.strokeBorder(.black.opacity(0.08)))
@@ -50,7 +53,7 @@ struct AppIconView: View {
         .task(id: host) {
             favicon = nil
             guard let host, !host.isEmpty else { return }
-            favicon = await SiteIcons.shared.icon(for: host).flatMap(NSImage.init(data:))
+            favicon = await SiteIcons.shared.icon(for: host, downloading: downloadsIcon).flatMap(NSImage.init(data:))
         }
     }
 }

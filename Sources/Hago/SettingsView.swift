@@ -650,7 +650,7 @@ private struct ProjectCard: View {
                 Menu {
                     Button("Archive") { project.isArchived = true }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Image(systemName: "ellipsis")
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -676,11 +676,6 @@ private struct ProjectCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .hagoCard(padding: 16)
-        .overlay(alignment: .leading) {
-            UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16, style: .continuous)
-                .fill(color)
-                .frame(width: 4)
-        }
         .onChange(of: project) { _, updated in
             autosaveTask?.cancel()
             if updated.isArchived {
@@ -789,7 +784,7 @@ private struct CategoryRow: View {
             Menu {
                 Button("Move to \(otherKind.displayName)") { category.kind = otherKind }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(systemName: "ellipsis")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -1052,8 +1047,9 @@ struct PrivacySettingsView: View {
                 HStack(spacing: 10) {
                     HStack(spacing: 6) {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                        TextField("Search", text: $query)
+                        TextField("Search", text: $query, prompt: Text("Search"))
                             .textFieldStyle(.plain)
+                            .labelsHidden()
                         if !query.isEmpty {
                             Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                                 .buttonStyle(.plain)
@@ -1109,7 +1105,8 @@ struct PrivacySettingsView: View {
                 .fixedSize()
             }
         } footer: {
-            Text("\(ignoreRules.count) rule\(ignoreRules.count == 1 ? "" : "s"). Matching activity is never saved and wins over every other rule.")
+            let filtered = filter != .all || !query.isEmpty
+            Text("\(filtered ? "\(shownRules.count) of " : "")\(ignoreRules.count) rule\(ignoreRules.count == 1 ? "" : "s"). Matching activity is never saved and wins over every other rule.")
         }
     }
 
@@ -1252,7 +1249,7 @@ private struct IgnoreRuleRow: View {
         case .bundleIdentifier:
             AppIconView(bundleIdentifier: condition?.value ?? "", size: 22)
         case .host:
-            AppIconView(bundleIdentifier: "", host: condition?.value, size: 22, placeholderSymbol: "globe")
+            AppIconView(bundleIdentifier: "", host: condition?.value, size: 22, placeholderSymbol: "globe", downloadsIcon: false)
         case .url:
             Image(systemName: "globe").foregroundStyle(.secondary)
         case .appName:

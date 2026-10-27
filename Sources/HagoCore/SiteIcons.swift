@@ -33,7 +33,7 @@ public actor SiteIcons {
         session = URLSession(configuration: configuration)
     }
 
-    public func icon(for host: String) async -> Data? {
+    public func icon(for host: String, downloading: Bool = true) async -> Data? {
         guard let host = Self.fetchableHost(host) else { return nil }
         if let cached = memory[host] { return cached }
         if let task = inFlight[host] { return await task.value }
@@ -45,7 +45,7 @@ public actor SiteIcons {
             return data
         }
         let missingSince = (try? missing.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-        guard Self.isEnabled, missingSince.map({ Date().timeIntervalSince($0) > Self.retryMissingAfter }) ?? true else {
+        guard downloading, Self.isEnabled, missingSince.map({ Date().timeIntervalSince($0) > Self.retryMissingAfter }) ?? true else {
             memory[host] = .some(nil)
             return nil
         }

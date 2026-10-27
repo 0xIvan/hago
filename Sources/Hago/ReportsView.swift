@@ -228,7 +228,7 @@ private struct ReportPeriodChart: View {
     private var maximumHours: Double {
         max(ChartScale.maximumHours(
             for: report.buckets.map { $0.workSeconds + $0.personalSeconds + $0.reviewSeconds }
-        ), ceil(goalHours))
+        ), ceil(goalHours * 1.2))
     }
 
     var body: some View {

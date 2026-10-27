@@ -9,7 +9,7 @@ public struct TimeFormatting {
         let minutes = (seconds % 3_600) / 60
 
         if hours > 0 {
-            return "\(hours)h \(minutes)m"
+            return minutes == 0 ? "\(hours)h" : "\(hours)h \(minutes)m"
         }
 
         return "\(minutes)m"

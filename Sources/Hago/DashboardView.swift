@@ -397,7 +397,7 @@ private struct TopItemsCard: View {
                         )
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 8) {
-                                Text(bucket.name)
+                                Text(bucket.name.hasPrefix("www.") ? String(bucket.name.dropFirst(4)) : bucket.name)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                 Spacer(minLength: 4)

@@ -1,9 +1,12 @@
-- Set your own day: choose when the day starts (midnight to 8am), a daily work goal and a weekly work goal in General.
-- This Week in Overview fills each day toward your daily goal, so 6 hours of an 8 hour goal fills three quarters. Reports show the goal line and how much of the week's goal you reached.
-- Real site icons for Instagram, X and every other site. Hago downloads each icon once from the site itself, with no cookies, and keeps it on your Mac. Turn it off in Privacy to see letters instead.
-- AI suggestions are simpler to set up: pick an AI, allow what it sees, and choose whether it only suggests or also files the sure ones. One setting now covers both manual and automatic checks. Models and paths moved under Advanced.
-- Projects show their time this week and month as cards, with archived projects kept apart. Categories are grouped under Work and Personal.
-- Privacy has search and filters for Never record, and long lists collapse.
+Polish for 0.2.22:
+
+- Whole hours read as "8h" instead of "8h 0m" everywhere.
+- Site names drop the "www." prefix, and site icons are a little larger.
+- Sites in Never record no longer download an icon. Hago shows a letter for them instead.
+- The Reports chart leaves room above the work goal line.
+- Advanced in AI suggestions opens reliably.
+- Never record search reads left to right and shows how many rules match.
+- Project and category menus use a plain "..." button.
 
 Download the universal DMG, open it and drag Hago to Applications. The app and DMG are Developer ID signed and notarized. Requires macOS 14 or newer; supports Apple Silicon and Intel.
 

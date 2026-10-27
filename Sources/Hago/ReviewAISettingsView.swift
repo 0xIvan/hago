@@ -10,6 +10,7 @@ struct ReviewAISettingsView: View {
     @State private var hasSavedKey = false
     @State private var customBinaryPath = ""
     @State private var customModelID = ""
+    @State private var showsAdvanced = false
 
     var body: some View {
         Form {
@@ -114,7 +115,20 @@ struct ReviewAISettingsView: View {
                 .disabled(!appState.selectedReviewAIHarnessIsConfirmed)
 
                 Section {
-                    DisclosureGroup("Advanced") {
+                    Button {
+                        showsAdvanced.toggle()
+                    } label: {
+                        HStack {
+                            Text("Advanced")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .rotationEffect(.degrees(showsAdvanced ? 90 : 0))
+                                .foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if showsAdvanced {
                         advanced
                     }
                 }
