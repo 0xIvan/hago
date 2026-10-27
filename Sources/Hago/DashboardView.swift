@@ -283,15 +283,17 @@ private struct NowCard: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
-            } else if let snapshot = appState.currentSnapshot {
+            } else if let shown = appState.shownActivity {
+                let snapshot = shown.snapshot
+                let kind = shown.kind
                 AppIconView(bundleIdentifier: snapshot.bundleIdentifier, host: snapshot.host, size: 32)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
                         Image(systemName: "circle.fill")
                             .font(.system(size: 6))
                             .foregroundStyle(kind?.tint ?? .secondary)
-                            .symbolEffect(.pulse)
-                        Text("Now")
+                            .symbolEffect(.pulse, isActive: shown.isLive)
+                        Text(shown.isLive ? "Now" : "Last")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                         if let kind {
@@ -325,9 +327,6 @@ private struct NowCard: View {
         .background(HagoPalette.track.opacity(0.7), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private var kind: ActivityKind? {
-        appState.currentClassification?.kind == .ignored ? nil : appState.currentClassification?.kind
-    }
 }
 
 private struct KindTotalRow: View {

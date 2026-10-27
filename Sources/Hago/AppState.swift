@@ -80,6 +80,7 @@ final class AppState: ObservableObject {
     @Published var isTrackingPaused = false
     /// Why nothing is being recorded right now, when tracking is on but the snapshot is empty.
     @Published private(set) var idleReason = IdleReason.starting
+    @Published private(set) var lastActivity: ShownActivity?
     @Published private(set) var isAway = false
     @Published var awayAfterMinutes = UserDefaults.standard.object(forKey: AppState.awayAfterMinutesKey) as? Int ?? 10 {
         didSet { UserDefaults.standard.set(awayAfterMinutes, forKey: Self.awayAfterMinutesKey) }
@@ -196,6 +197,15 @@ final class AppState: ObservableObject {
             return Duration.seconds(wholeMinutes * 60).formatted(.units(allowed: [.hours, .minutes], width: .wide))
         }
         return "Hago\(isTrackingPaused ? ", paused" : ""). Work: \(spokenDuration(todaySummary.workSeconds)). Total tracked: \(spokenDuration(todayTrackedSeconds))."
+    }
+
+    /// What the Now cards show: the live activity, or while you look at Hago, what you were doing just before.
+    var shownActivity: ShownActivity? {
+        if let currentSnapshot {
+            let kind = currentClassification?.kind
+            return ShownActivity(snapshot: currentSnapshot, kind: kind == .ignored ? nil : kind, isLive: true)
+        }
+        return idleReason == .inHago && !isAway && !isTrackingPaused ? lastActivity : nil
     }
 
     var todayTrackedSeconds: TimeInterval {
@@ -1296,11 +1306,10 @@ final class AppState: ObservableObject {
             guard !isTrackingPaused, suspensionReasons.isEmpty else { return }
             let foregroundPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
             let inHago = foregroundPID == ProcessInfo.processInfo.processIdentifier
+            // The front app changed while capturing; the next tick sees the new one.
+            if let snapshot, snapshot.processIdentifier != foregroundPID, !inHago { return }
             // Time spent looking at Hago itself is neither work nor personal.
-            let valid = snapshot.flatMap {
-                $0.processIdentifier == foregroundPID && !inHago ? $0 : nil
-            }
-            recordObservation(valid, inHago: inHago)
+            recordObservation(inHago ? nil : snapshot, inHago: inHago)
         }
     }
 
@@ -1315,7 +1324,9 @@ final class AppState: ObservableObject {
         let touchesReview = currentClassification?.kind == .review || classification?.kind == .review
         currentSnapshot = retained
         currentClassification = classification
-        if retained == nil {
+        if let retained {
+            lastActivity = ShownActivity(snapshot: retained, kind: classification?.kind, isLive: false)
+        } else {
             idleReason = inHago ? .inHago : classification?.kind == .ignored ? .notRecorded : .unavailable
         }
         enqueue(recorder.observe(retained, at: Date(), uptime: ProcessInfo.processInfo.systemUptime))
@@ -1412,4 +1423,10 @@ enum IdleReason {
         case .unavailable: "questionmark.circle"
         }
     }
+}
+
+struct ShownActivity {
+    let snapshot: ActivitySnapshot
+    let kind: ActivityKind?
+    let isLive: Bool
 }

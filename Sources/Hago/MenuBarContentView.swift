@@ -155,11 +155,12 @@ struct MenuBarContentView: View {
                 title: "Tracking paused",
                 subtitle: "Nothing is recorded until you resume"
             )
-        } else if let snapshot = appState.currentSnapshot {
+        } else if let shown = appState.shownActivity {
+            let snapshot = shown.snapshot
             activityLabel(
                 icon: AppIconView(bundleIdentifier: snapshot.bundleIdentifier, host: snapshot.host, size: 30),
                 title: snapshot.host.isEmpty ? snapshot.appName : snapshot.host,
-                subtitle: snapshot.windowTitle
+                subtitle: shown.isLive ? snapshot.windowTitle : "Last thing you were on"
             )
             .help(snapshot.url ?? snapshot.windowTitle)
         } else if appState.isAway {
