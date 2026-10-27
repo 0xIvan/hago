@@ -33,13 +33,6 @@ struct MenuBarContentView: View {
                     .foregroundStyle(.red)
             }
 
-            MenuActionButton(
-                title: appState.isTrackingPaused ? "Resume Tracking" : "Pause Tracking",
-                symbol: appState.isTrackingPaused ? "play" : "pause"
-            ) {
-                appState.toggleTracking()
-            }
-
             if appState.reviewAISettings.scheduleEnabled,
                appState.reviewAIScheduleState.consecutiveFailures >= 3 {
                 Label("Scheduled Review needs attention. Check AI suggestions settings.", systemImage: "exclamationmark.triangle.fill")
@@ -143,38 +136,73 @@ struct MenuBarContentView: View {
         }
     }
 
-    @ViewBuilder
     private var currentActivity: some View {
-        if let snapshot = appState.currentSnapshot {
-            HStack(spacing: 10) {
-                AppIconView(bundleIdentifier: snapshot.bundleIdentifier, host: snapshot.host, size: 30)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(snapshot.host.isEmpty ? snapshot.appName : snapshot.host)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if !snapshot.windowTitle.isEmpty {
-                        Text(snapshot.windowTitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HagoPalette.track, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        HStack(spacing: 10) {
+            activityDetails
+            Spacer(minLength: 0)
+            pauseButton
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HagoPalette.track, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var activityDetails: some View {
+        if appState.isTrackingPaused {
+            activityLabel(
+                icon: Image(systemName: "pause.circle.fill").font(.system(size: 26)).foregroundStyle(.secondary),
+                title: "Tracking paused",
+                subtitle: "Nothing is recorded until you resume"
+            )
+        } else if let snapshot = appState.currentSnapshot {
+            activityLabel(
+                icon: AppIconView(bundleIdentifier: snapshot.bundleIdentifier, host: snapshot.host, size: 30),
+                title: snapshot.host.isEmpty ? snapshot.appName : snapshot.host,
+                subtitle: snapshot.windowTitle
+            )
             .help(snapshot.url ?? snapshot.windowTitle)
         } else {
-            Label("Waiting for current activity", systemImage: "hourglass")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(11)
-                .background(HagoPalette.track, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            activityLabel(
+                icon: Image(systemName: "hourglass").font(.system(size: 18)).foregroundStyle(.secondary),
+                title: "Waiting for activity",
+                subtitle: ""
+            )
         }
+    }
+
+    private func activityLabel(icon: some View, title: String, subtitle: String) -> some View {
+        HStack(spacing: 10) {
+            icon.frame(width: 30, height: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+    }
+
+    private var pauseButton: some View {
+        let paused = appState.isTrackingPaused
+        return Button(action: appState.toggleTracking) {
+            Image(systemName: paused ? "play.fill" : "pause.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(paused ? Color.white : Color.primary)
+                .frame(width: 28, height: 28)
+                .background(paused ? Color.accentColor : Color.primary.opacity(0.1), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(paused ? "Resume tracking" : "Pause tracking")
+        .accessibilityLabel(paused ? "Resume tracking" : "Pause tracking")
     }
 
     private var actions: some View {
