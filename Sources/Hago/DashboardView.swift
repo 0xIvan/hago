@@ -1881,6 +1881,15 @@ private struct ActivityRuleInspectorView: View {
                         .truncationMode(.middle)
                     Text(inspection.detail)
                         .foregroundStyle(.secondary)
+                    if let url = inspection.sample.segment.url, !url.isEmpty {
+                        Text(url)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            .help(url)
+                    }
                 }
                 Spacer()
                 ActivityKindBadge(kind: inspection.sample.classification.kind)

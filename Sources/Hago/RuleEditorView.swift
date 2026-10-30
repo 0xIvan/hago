@@ -431,16 +431,20 @@ private struct WebsiteField: View {
     @EnvironmentObject private var appState: AppState
     @Binding var value: String
     @FocusState private var isFocused: Bool
+    @State private var isTyping = false
 
     private var suggestions: [String] {
         let query = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard isFocused, !query.isEmpty else { return [] }
-        return Array(appState.recordedHosts().lazy.filter { $0.contains(query) && $0 != query }.prefix(5))
+        guard isFocused, isTyping, !query.isEmpty else { return [] }
+        return Array(appState.recordedHosts().lazy.filter {
+            $0 != query && ($0.hasPrefix(query) || $0.contains("." + query))
+        }.prefix(5))
     }
 
     var body: some View {
         TextField("Website", text: $value, prompt: Text("github.com"))
             .focused($isFocused)
+            .onChange(of: value) { isTyping = isFocused }
         ForEach(suggestions, id: \.self) { host in
             Button {
                 value = host
