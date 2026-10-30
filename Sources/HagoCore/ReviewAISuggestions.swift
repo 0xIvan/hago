@@ -263,6 +263,7 @@ public struct ReviewAISuggestionValidator: Sendable {
 
     private func isBrowserText(_ value: String) -> Bool {
         let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !BrowserCapturePolicy.isWebApp(bundleIdentifier: normalizedValue) else { return false }
         return normalizedValue.contains("chrome")
             || normalizedValue.contains("safari")
             || normalizedValue.contains("arc")
@@ -451,6 +452,7 @@ public struct ReviewAISuggestionGrouper: Sendable {
     private func isBrowser(snapshot: ActivitySnapshot) -> Bool {
         let appName = snapshot.appName.lowercased()
         let bundleIdentifier = snapshot.bundleIdentifier.lowercased()
+        guard !BrowserCapturePolicy.isWebApp(bundleIdentifier: bundleIdentifier) else { return false }
 
         return appName.contains("chrome")
             || appName.contains("safari")

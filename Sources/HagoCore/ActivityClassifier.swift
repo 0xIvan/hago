@@ -98,7 +98,8 @@ public struct ActivityClassifier {
               rule.conditions.count == 1,
               let condition = rule.conditions.first,
               condition.operation == .equals,
-              condition.field == .appName || condition.field == .bundleIdentifier else {
+              condition.field == .appName || condition.field == .bundleIdentifier,
+              !(condition.field == .bundleIdentifier && BrowserCapturePolicy.isWebApp(bundleIdentifier: condition.value)) else {
             return false
         }
 
@@ -208,7 +209,10 @@ struct PreparedCondition: Sendable {
     }
 
     static func matches(_ conditions: [PreparedCondition], values: SnapshotValues) -> Bool {
-        !conditions.isEmpty && conditions.allSatisfy { $0.matches(values[$0.field]) }
+        guard !conditions.isEmpty, conditions.allSatisfy({ $0.matches(values[$0.field]) }) else { return false }
+        // Older builds recorded Chrome's front tab under a web app's name, so an app-wide rule for the web app
+        // must not claim those sites.
+        return !(values.isWebAppWithSite && conditions.allSatisfy { $0.field == .appName || $0.field == .bundleIdentifier })
     }
 
     func matches(_ source: FieldValue) -> Bool {
@@ -283,6 +287,7 @@ struct SnapshotValues {
     private let appName: FieldValue
     private let url: FieldValue
     private let windowTitle: FieldValue
+    let isWebAppWithSite: Bool
 
     init(_ snapshot: ActivitySnapshot) {
         host = FieldValue(snapshot.host)
@@ -290,6 +295,7 @@ struct SnapshotValues {
         appName = FieldValue(snapshot.appName)
         url = FieldValue(snapshot.url ?? "")
         windowTitle = FieldValue(snapshot.windowTitle)
+        isWebAppWithSite = !host.text.isEmpty && BrowserCapturePolicy.isWebApp(bundleIdentifier: bundleIdentifier.text)
     }
 
     subscript(field: RuleField) -> FieldValue {

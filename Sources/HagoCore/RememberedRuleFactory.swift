@@ -30,7 +30,9 @@ public struct RememberedRuleFactory {
             return options
         }
         let bundle = snapshot.bundleIdentifier
-        guard !bundle.isEmpty, !BrowserCapturePolicy.isBrowser(bundleIdentifier: bundle, appName: snapshot.appName) else { return [] }
+        guard !bundle.isEmpty,
+              BrowserCapturePolicy.isWebApp(bundleIdentifier: bundle)
+                || !BrowserCapturePolicy.isBrowser(bundleIdentifier: bundle, appName: snapshot.appName) else { return [] }
         let app = RuleCondition(field: .bundleIdentifier, operation: .equals, value: bundle)
         var options: [Rule] = []
         if !snapshot.windowTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -47,5 +49,10 @@ public enum BrowserCapturePolicy {
         let names = ["google chrome", "safari", "firefox", "arc", "brave browser", "vivaldi", "opera", "microsoft edge", "orion", "zen browser"]
         let bundles = ["com.google.chrome", "com.apple.safari", "org.mozilla.firefox", "company.thebrowser.browser", "com.brave.browser", "com.vivaldi.vivaldi", "com.operasoftware.opera", "com.microsoft.edgemac", "com.kagi.kagimacos", "app.zen-browser.zen"]
         return names.contains(appName.lowercased()) || bundles.contains { bundle.hasPrefix($0) }
+    }
+
+    /// A Chrome web app (Add to Dock / Install) runs as its own app for one site, so an app-wide rule is safe.
+    public static func isWebApp(bundleIdentifier: String) -> Bool {
+        bundleIdentifier.lowercased().hasPrefix("com.google.chrome.app.")
     }
 }
