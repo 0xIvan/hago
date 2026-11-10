@@ -92,6 +92,8 @@ public final class HagoStore {
     private var transactionDepth = 0
     /// Lets overlap reads use a bounded started_at range instead of scanning all earlier history.
     private var longestSegmentDuration: TimeInterval?
+    /// SQLite answers MAX from activity_segments_duration_idx only when the query spells the indexed expression identically.
+    private static let segmentDuration = "ended_at - started_at"
 
     public init(databaseURL: URL) throws {
         var connection: OpaquePointer?
@@ -226,7 +228,7 @@ public final class HagoStore {
 
     private func loadLongestSegmentDuration() throws -> TimeInterval {
         if let longestSegmentDuration { return longestSegmentDuration }
-        let longest = try query("SELECT COALESCE(MAX(ended_at - started_at), 0) FROM activity_segments") {
+        let longest = try query("SELECT COALESCE(MAX(\(Self.segmentDuration)), 0) FROM activity_segments") {
             sqlite3_column_double($0, 0)
         }.first ?? 0
         longestSegmentDuration = longest
@@ -2645,6 +2647,7 @@ extension HagoStore {
         try execute("CREATE INDEX IF NOT EXISTS classifications_rule_id_idx ON classifications(rule_id)")
         try execute("CREATE INDEX IF NOT EXISTS classifications_project_id_idx ON classifications(project_id)")
         try execute("CREATE INDEX IF NOT EXISTS correction_changes_segment_id_idx ON correction_changes(segment_id)")
+        try execute("CREATE INDEX IF NOT EXISTS activity_segments_duration_idx ON activity_segments(\(Self.segmentDuration))")
     }
 
     public func backup(to destination: URL) throws {

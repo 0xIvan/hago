@@ -61,6 +61,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSApp.applicationIconImage = image
-        NSApp.dockTile.display()
     }
 }

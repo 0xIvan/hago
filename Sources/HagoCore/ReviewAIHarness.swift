@@ -364,12 +364,16 @@ public struct FoundationReviewAIProcessRunner: ReviewAIProcessRunning {
         process.standardOutput = standardOutputPipe
         process.standardError = standardErrorPipe
 
-        standardOutputPipe.fileHandleForReading.readabilityHandler = { handle in
-            output.append(handle.availableData, stream: .standardOutput)
+        func appendUntilEnd(_ stream: BoundedProcessOutput.Stream) -> @Sendable (FileHandle) -> Void {
+            { handle in
+                let data = handle.availableData
+                // Foundation keeps calling the handler at end of file, which spins a core until it is removed.
+                if data.isEmpty { handle.readabilityHandler = nil }
+                output.append(data, stream: stream)
+            }
         }
-        standardErrorPipe.fileHandleForReading.readabilityHandler = { handle in
-            output.append(handle.availableData, stream: .standardError)
-        }
+        standardOutputPipe.fileHandleForReading.readabilityHandler = appendUntilEnd(.standardOutput)
+        standardErrorPipe.fileHandleForReading.readabilityHandler = appendUntilEnd(.standardError)
         let deadline = Date().addingTimeInterval(request.timeout)
 
         do {
