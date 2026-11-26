@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Foundation
 import HagoCore
+import Security
 import ServiceManagement
 
 @MainActor
@@ -637,7 +638,7 @@ final class AppState: ObservableObject {
                         return
                     }
                 }
-                reviewAIAnalysisState = .completed
+                reviewAIAnalysisState = .checked(result.analyzedGroups)
                 reviewAIAnalysisTask = nil
                 errorMessage = nil
             } catch {
@@ -689,6 +690,7 @@ final class AppState: ObservableObject {
 
     private func checkScheduledReview() {
         guard !isDiscoveringReviewAIHarnesses,
+              reviewAISettings.selectedHarness != .codex || reviewAIIsReady,
               reviewAIScheduleState.isDue(
                 at: Date(), enabled: reviewAISettings.scheduleEnabled,
                 isRunning: reviewAIAnalysisTask != nil || reviewAIAnalysisService?.isRunning == true
@@ -811,17 +813,37 @@ final class AppState: ObservableObject {
     }
 
     func reconnectCodex() {
-        let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex")
+        guard !isDiscoveringReviewAIHarnesses, reviewAIAnalysisState != .analyzing else { return }
+        reviewAIAnalysisState = .idle
+        refreshReviewAIHarnesses(preferInstalledCodex: true)
+    }
+
+    private nonisolated static func verifiedCodexExecutable(in app: URL) -> String? {
         let candidates = [
             "Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
             "Contents/Resources/codex"
         ]
-        let bundledExecutable = app.flatMap { app in
-            candidates.lazy.compactMap {
-                ReviewAIHarnessDiscovery.resolveExecutable(app.appending(path: $0).path, path: nil)
-            }.first
+
+        var requirement: SecRequirement?
+        let openAIDeveloperID = #"anchor apple generic and certificate leaf[subject.OU] = "2DC432GLL2""#
+        guard SecRequirementCreateWithString(openAIDeveloperID as CFString, [], &requirement) == errSecSuccess,
+              let requirement else { return nil }
+
+        for candidate in candidates {
+            let url = app.appending(path: candidate)
+            var code: SecStaticCode?
+            if ReviewAIHarnessDiscovery.resolveExecutable(url.path, path: nil) != nil,
+               SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess,
+               let code,
+               SecStaticCodeCheckValidity(code, [], requirement) == errSecSuccess {
+                return url.path
+            }
         }
-        setReviewAICustomBinaryPath(bundledExecutable ?? "", for: .codex)
+        return nil
+    }
+
+    var codexAppURL: URL? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex")
     }
 
     func setReviewAICustomBinaryPath(_ path: String, for harness: ReviewAIHarnessKind) {
@@ -835,18 +857,28 @@ final class AppState: ObservableObject {
         if previousPath != reviewAISettings.customBinaryPath(for: harness) {
             reviewAIHarnessStatuses.removeAll { $0.harness == harness }
             reviewAISettings.confirmedHarnesses.remove(harness)
+            saveReviewAISettings()
         }
-        saveReviewAISettings()
         refreshReviewAIHarnesses()
     }
 
-    func refreshReviewAIHarnesses() {
+    func refreshReviewAIHarnesses(preferInstalledCodex: Bool = false) {
         guard !isDiscoveringReviewAIHarnesses else {
             return
         }
         isDiscoveringReviewAIHarnesses = true
+        let codexApp = preferInstalledCodex ? codexAppURL : nil
 
         Task { @MainActor in
+            if let codexApp {
+                let executable = await Task.detached { Self.verifiedCodexExecutable(in: codexApp) }.value
+                if let executable, reviewAISettings.selectedHarness == .codex,
+                   executable != reviewAISettings.customBinaryPath(for: .codex) {
+                    reviewAIHarnessStatuses.removeAll { $0.harness == .codex }
+                    reviewAISettings.customBinaryPaths[ReviewAIHarnessKind.codex.rawValue] = executable
+                    saveReviewAISettings()
+                }
+            }
             while true {
                 let settings = reviewAISettings
                 let statuses = await reviewAIHarnessDiscovery.discover(settings: settings)
@@ -1395,6 +1427,7 @@ enum ReviewAIAnalysisState: Equatable {
     case idle
     case analyzing
     case completed
+    case checked(Int)
     case failed(String)
 }
 

@@ -233,6 +233,7 @@ public struct ReviewAISettings: Equatable, Codable, Sendable {
 public enum ReviewAIHarnessAvailability: String, Equatable, Codable, Sendable {
     case available
     case missing
+    case signInRequired
     case failed
     case timedOut
 }
@@ -683,6 +684,29 @@ public struct ReviewAIHarnessDiscovery: Sendable {
                     version: version,
                     message: "\(harness.displayName) is installed but failed to run."
                 )
+            }
+            if harness == .codex {
+                let login = try await runner.run(
+                    ReviewAIProcessRequest(
+                        executablePath: executablePath,
+                        arguments: ["login", "status"],
+                        environment: environment,
+                        workingDirectory: directory,
+                        timeout: 4,
+                        maximumOutputBytes: 64 * 1_024
+                    )
+                )
+                if login.exitCode != 0 {
+                    let output = String(decoding: login.standardOutput + login.standardError, as: UTF8.self)
+                    let signedOut = output.localizedCaseInsensitiveContains("not logged in")
+                    return ReviewAIHarnessStatus(
+                        harness: harness,
+                        availability: signedOut ? .signInRequired : .failed,
+                        executablePath: executablePath,
+                        version: version,
+                        message: signedOut ? "Sign in to Codex to continue." : "Couldn’t check Codex sign-in."
+                    )
+                }
             }
             let models = await ReviewAIModelCatalog(runner: runner).models(
                 for: harness,

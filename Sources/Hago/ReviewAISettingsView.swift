@@ -1,3 +1,4 @@
+import AppKit
 import HagoCore
 import SwiftUI
 
@@ -9,6 +10,7 @@ struct ReviewAISettingsView: View {
     @State private var customBinaryPath = ""
     @State private var customModelID = ""
     @State private var showsAdvanced = false
+    @State private var requestedCodexReconnect = false
 
     var body: some View {
         Form {
@@ -53,7 +55,7 @@ struct ReviewAISettingsView: View {
                 codexConnection
             }
 
-            if selectedHarness != .disabled {
+            if selectedHarness != .disabled, selectedHarness != .codex {
                 Section("What it sees") {
                     Text(sharingSummary)
                         .foregroundStyle(.secondary)
@@ -71,7 +73,9 @@ struct ReviewAISettingsView: View {
                     }
                     .toggleStyle(.switch)
                 }
+            }
 
+            if selectedHarness != .disabled {
                 Section("What it does") {
                     ChoiceRow(
                         title: "Suggest",
@@ -163,20 +167,23 @@ struct ReviewAISettingsView: View {
                     .font(.headline)
                 Text(summaryDetail)
                     .foregroundStyle(.secondary)
-                if let message = appState.reviewAIScheduleState.message, appState.reviewAIScheduleState.outcome == .failed {
-                    Text(selectedHarness == .codex ? "The last automatic check failed." : message)
+                if selectedHarness != .codex, let message = appState.reviewAIScheduleState.message,
+                   appState.reviewAIScheduleState.outcome == .failed {
+                    Text(message)
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .textSelection(.enabled)
                 }
             }
             Spacer(minLength: 0)
-            if appState.reviewAIAnalysisState == .analyzing {
-                ProgressView().controlSize(.small)
-                Button("Stop") { appState.stopReviewAIAnalysis() }
-            } else if appState.reviewAIIsReady {
-                Button("Check Now") { appState.analyzeReview(scheduled: appState.reviewAISettings.scheduleEnabled) }
-                    .disabled(appState.isDiscoveringReviewAIHarnesses)
+            if selectedHarness != .codex {
+                if appState.reviewAIAnalysisState == .analyzing {
+                    ProgressView().controlSize(.small)
+                    Button("Stop") { appState.stopReviewAIAnalysis() }
+                } else if appState.reviewAIIsReady {
+                    Button("Check Now") { appState.analyzeReview(scheduled: appState.reviewAISettings.scheduleEnabled) }
+                        .disabled(appState.isDiscoveringReviewAIHarnesses)
+                }
             }
         }
         .padding(.vertical, 4)
@@ -192,11 +199,11 @@ struct ReviewAISettingsView: View {
         if selectedHarness == .disabled {
             return "Pick an AI below and it will sort what's waiting in Review into Work and Personal for you."
         }
+        if selectedHarness == .codex, !appState.reviewAIIsReady {
+            return "Connect Codex and choose what Hago can share."
+        }
         if !appState.reviewAIIsReady {
             if selectedHarness.isDirectProvider, !hasSavedKey { return "Add your API key, then allow sharing." }
-            if selectedHarness == .codex, appState.selectedReviewAIHarnessStatus?.isAvailable != true {
-                return "Reconnect Codex below to use it for Review."
-            }
             if !appState.selectedReviewAIHarnessIsConfirmed { return "Allow sharing below to turn it on." }
             return "\(selectedHarness.friendlyName) isn't available right now. Check that it's installed and signed in."
         }
@@ -244,26 +251,99 @@ struct ReviewAISettingsView: View {
     }
 
     private var codexConnection: some View {
-        Section("Codex connection") {
-            LabeledContent {
-                Button("Reconnect Codex") {
-                    appState.reconnectCodex()
+        Section {
+            if appState.isDiscoveringReviewAIHarnesses {
+                ProgressView("Checking your Codex connection…")
+                    .controlSize(.small)
+            } else if appState.selectedReviewAIHarnessStatus?.isAvailable != true {
+                codexRecovery
+            } else if !appState.selectedReviewAIHarnessIsConfirmed {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(requestedCodexReconnect ? "Sign-in verified. Allow sharing to continue." : "Codex is signed in. Allow sharing to continue.")
+                    Text(sharingSummary)
+                        .foregroundStyle(.secondary)
+                    Button("Allow Sharing") { appState.setReviewAIHarnessConfirmed(true) }
+                        .buttonStyle(.borderedProminent)
                 }
-                .disabled(appState.isDiscoveringReviewAIHarnesses)
-            } label: {
-                if appState.isDiscoveringReviewAIHarnesses {
-                    Text("Looking for Codex…")
-                } else if appState.selectedReviewAIHarnessStatus?.isAvailable == true {
-                    Text("Codex is available")
-                } else if appState.selectedReviewAIHarnessStatus?.availability == .missing {
-                    Text("Hago couldn’t find Codex.")
-                    Text("Install or open Codex, then reconnect here.")
-                } else {
-                    Text("Hago couldn’t connect to Codex.")
-                    Text("Open Codex and sign in, then reconnect here.")
+            } else {
+                codexReview
+            }
+            if appState.selectedReviewAIHarnessIsConfirmed {
+                Toggle(isOn: Binding(
+                    get: { appState.selectedReviewAIHarnessIsConfirmed },
+                    set: { appState.setReviewAIHarnessConfirmed($0) }
+                )) {
+                    Text("Allow sharing with Codex")
+                    Text(sharingSummary)
                 }
+                .toggleStyle(.switch)
+            }
+        } header: {
+            Text("Codex connection")
+        } footer: {
+            if !appState.isDiscoveringReviewAIHarnesses, appState.selectedReviewAIHarnessStatus?.isAvailable == true,
+               appState.reviewAIAnalysisState != .analyzing {
+                Button("Reconnect Codex", action: reconnectCodex)
+                    .buttonStyle(.link)
             }
         }
+    }
+
+    private var codexRecovery: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            switch appState.selectedReviewAIHarnessStatus?.availability {
+            case .missing:
+                Text("Hago couldn’t find Codex. Install the ChatGPT app, then reconnect here.")
+            case .signInRequired:
+                Text("Sign in to Codex, then reconnect here.")
+            default:
+                Text("Hago couldn’t check Codex. Open Codex and try reconnecting.")
+            }
+            HStack {
+                if let app = appState.codexAppURL {
+                    Button("Open Codex") { NSWorkspace.shared.open(app) }
+                } else if appState.selectedReviewAIHarnessStatus?.availability == .missing {
+                    Link("Get the ChatGPT App", destination: URL(string: "https://chatgpt.com/download/")!)
+                }
+                Button("Reconnect Codex", action: reconnectCodex)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private var codexReview: some View {
+        LabeledContent {
+            switch appState.reviewAIAnalysisState {
+            case .analyzing:
+                Button("Stop") { appState.stopReviewAIAnalysis() }
+            case .checked:
+                Button("Open Review") { appState.selectedSection = .review }
+                    .buttonStyle(.borderedProminent)
+            case .failed:
+                Button("Try Again") { appState.analyzeReview() }
+                    .buttonStyle(.borderedProminent)
+            default:
+                Button("Check Review") { appState.analyzeReview() }
+                    .buttonStyle(.borderedProminent)
+            }
+        } label: {
+            switch appState.reviewAIAnalysisState {
+            case .analyzing:
+                ProgressView("Codex is checking Review…")
+                    .controlSize(.small)
+            case .checked(let count):
+                Text(count == 0 ? "Nothing new needed checking." : "Review check complete.")
+            case .failed:
+                Text("Codex couldn’t check Review. Try again or reconnect Codex.")
+            default:
+                Text(requestedCodexReconnect ? "Codex reconnected. Ready to check Review." : "Codex is ready to check Review.")
+            }
+        }
+    }
+
+    private func reconnectCodex() {
+        requestedCodexReconnect = true
+        appState.reconnectCodex()
     }
 
     @ViewBuilder
