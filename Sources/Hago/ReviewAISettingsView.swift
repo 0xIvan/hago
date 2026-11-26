@@ -280,12 +280,6 @@ struct ReviewAISettingsView: View {
             }
         } header: {
             Text("Codex connection")
-        } footer: {
-            if !appState.isDiscoveringReviewAIHarnesses, appState.selectedReviewAIHarnessStatus?.isAvailable == true,
-               appState.reviewAIAnalysisState != .analyzing {
-                Button("Reconnect Codex", action: reconnectCodex)
-                    .buttonStyle(.link)
-            }
         }
     }
 
@@ -320,8 +314,12 @@ struct ReviewAISettingsView: View {
                 Button("Open Review") { appState.selectedSection = .review }
                     .buttonStyle(.borderedProminent)
             case .failed:
-                Button("Try Again") { appState.analyzeReview() }
-                    .buttonStyle(.borderedProminent)
+                HStack {
+                    Button("Reconnect Codex", action: reconnectCodex)
+                        .buttonStyle(.link)
+                    Button("Try Again") { appState.analyzeReview() }
+                        .buttonStyle(.borderedProminent)
+                }
             default:
                 Button("Check Review") { appState.analyzeReview() }
                     .buttonStyle(.borderedProminent)
@@ -334,7 +332,7 @@ struct ReviewAISettingsView: View {
             case .checked(let count):
                 Text(count == 0 ? "Nothing new needed checking." : "Review check complete.")
             case .failed:
-                Text("Codex couldn’t check Review. Try again or reconnect Codex.")
+                Text("Codex couldn’t check Review.")
             default:
                 Text(requestedCodexReconnect ? "Codex reconnected. Ready to check Review." : "Codex is ready to check Review.")
             }
