@@ -1,8 +1,6 @@
 import HagoCore
 import SwiftUI
 
-/// Three plain steps: pick an AI, allow what it sees, choose how much it does on its own.
-/// Models, reasoning and CLI paths stay under Advanced.
 struct ReviewAISettingsView: View {
     @EnvironmentObject private var appState: AppState
     @State private var apiKey = ""
@@ -28,10 +26,10 @@ struct ReviewAISettingsView: View {
                     let status = appState.reviewAIHarnessStatuses.first { $0.harness == harness }
                     ChoiceRow(
                         title: harness.friendlyName,
-                        detail: status?.isAvailable == true ? harness.friendlyDetail : "Not installed on this Mac.",
+                        detail: harness == .codex || status?.isAvailable == true ? harness.friendlyDetail : "Not installed on this Mac.",
                         isSelected: selectedHarness == harness
                     ) { appState.selectReviewAIHarness(harness) }
-                    .disabled(status?.isAvailable != true && selectedHarness != harness)
+                    .disabled(harness != .codex && status?.isAvailable != true && selectedHarness != harness)
                 }
                 ForEach([ReviewAIHarnessKind.anthropic, .openAI], id: \.self) { harness in
                     ChoiceRow(
@@ -49,6 +47,10 @@ struct ReviewAISettingsView: View {
                 if appState.isDiscoveringReviewAIHarnesses {
                     Text("Looking for AI apps on this Mac…")
                 }
+            }
+
+            if selectedHarness == .codex {
+                codexConnection
             }
 
             if selectedHarness != .disabled {
@@ -162,7 +164,7 @@ struct ReviewAISettingsView: View {
                 Text(summaryDetail)
                     .foregroundStyle(.secondary)
                 if let message = appState.reviewAIScheduleState.message, appState.reviewAIScheduleState.outcome == .failed {
-                    Text(message)
+                    Text(selectedHarness == .codex ? "The last automatic check failed." : message)
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .textSelection(.enabled)
@@ -192,6 +194,9 @@ struct ReviewAISettingsView: View {
         }
         if !appState.reviewAIIsReady {
             if selectedHarness.isDirectProvider, !hasSavedKey { return "Add your API key, then allow sharing." }
+            if selectedHarness == .codex, appState.selectedReviewAIHarnessStatus?.isAvailable != true {
+                return "Reconnect Codex below to use it for Review."
+            }
             if !appState.selectedReviewAIHarnessIsConfirmed { return "Allow sharing below to turn it on." }
             return "\(selectedHarness.friendlyName) isn't available right now. Check that it's installed and signed in."
         }
@@ -236,6 +241,29 @@ struct ReviewAISettingsView: View {
             return "For items waiting in Review, Hago sends app names, website names, minutes and your kind of work. Full addresses, page contents, private windows and anything you told Hago never to record stay on this Mac. Your provider bills your API account."
         }
         return "For items waiting in Review, \(selectedHarness.friendlyName) receives app names, window titles, websites and minutes, plus your kind of work. It sends them to its own AI service under your sign-in. Private windows and anything you told Hago never to record are never included."
+    }
+
+    private var codexConnection: some View {
+        Section("Codex connection") {
+            LabeledContent {
+                Button("Reconnect Codex") {
+                    appState.reconnectCodex()
+                }
+                .disabled(appState.isDiscoveringReviewAIHarnesses)
+            } label: {
+                if appState.isDiscoveringReviewAIHarnesses {
+                    Text("Looking for Codex…")
+                } else if appState.selectedReviewAIHarnessStatus?.isAvailable == true {
+                    Text("Codex is available")
+                } else if appState.selectedReviewAIHarnessStatus?.availability == .missing {
+                    Text("Hago couldn’t find Codex.")
+                    Text("Install or open Codex, then reconnect here.")
+                } else {
+                    Text("Hago couldn’t connect to Codex.")
+                    Text("Open Codex and sign in, then reconnect here.")
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -312,24 +340,26 @@ struct ReviewAISettingsView: View {
                         .tag(effort.rawValue)
                 }
             }
-            HStack {
-                TextField("Path to \(selectedHarness.displayName), if Hago can't find it", text: $customBinaryPath)
-                    .textFieldStyle(.roundedBorder)
-                Button("Save") { appState.setReviewAICustomBinaryPath(customBinaryPath, for: selectedHarness) }
-            }
-            if let status = appState.selectedReviewAIHarnessStatus {
-                LabeledContent("Status") {
-                    Text(status.message)
-                        .foregroundStyle(status.isAvailable ? .green : .orange)
-                        .textSelection(.enabled)
+            if selectedHarness != .codex {
+                HStack {
+                    TextField("Path to \(selectedHarness.displayName), if Hago can't find it", text: $customBinaryPath)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Save") { appState.setReviewAICustomBinaryPath(customBinaryPath, for: selectedHarness) }
                 }
+                if let status = appState.selectedReviewAIHarnessStatus {
+                    LabeledContent("Status") {
+                        Text(status.message)
+                            .foregroundStyle(status.isAvailable ? .green : .orange)
+                            .textSelection(.enabled)
+                    }
+                }
+                Button {
+                    appState.refreshReviewAIHarnesses()
+                } label: {
+                    Label("Look for AI apps again", systemImage: "arrow.clockwise")
+                }
+                .disabled(appState.isDiscoveringReviewAIHarnesses)
             }
-            Button {
-                appState.refreshReviewAIHarnesses()
-            } label: {
-                Label("Look for AI apps again", systemImage: "arrow.clockwise")
-            }
-            .disabled(appState.isDiscoveringReviewAIHarnesses)
         }
         Text("Automatic checks run only while Hago is open and your Mac is awake. Items AI already looked at aren't sent again unless they change.")
             .font(.caption)
@@ -387,7 +417,7 @@ private extension ReviewAIHarnessKind {
     var friendlyDetail: String {
         switch self {
         case .claudeCode: "Uses the Claude Code app on this Mac and your Claude sign-in. Nothing else to set up."
-        case .codex: "Uses the Codex app on this Mac and your ChatGPT sign-in. Nothing else to set up."
+        case .codex: "Uses Codex with your ChatGPT sign-in."
         case .pi: "Uses the Pi command-line app on this Mac with its own settings."
         case .anthropic: "Pay per use with your own Anthropic API key."
         case .openAI: "Pay per use with your own OpenAI API key."

@@ -623,16 +623,23 @@ public struct ReviewAIHarnessDiscovery: Sendable {
     public static func resolveExecutable(_ command: String, path: String?) -> String? {
         let expandedCommand = NSString(string: command).expandingTildeInPath
         if expandedCommand.contains("/") {
-            return FileManager.default.isExecutableFile(atPath: expandedCommand) ? expandedCommand : nil
+            return isExecutableFile(at: expandedCommand) ? expandedCommand : nil
         }
 
         for directory in path?.split(separator: ":").map(String.init) ?? [] {
             let candidate = URL(fileURLWithPath: directory).appendingPathComponent(command).path
-            if FileManager.default.isExecutableFile(atPath: candidate) {
+            if isExecutableFile(at: candidate) {
                 return candidate
             }
         }
         return nil
+    }
+
+    private static func isExecutableFile(at path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            && !isDirectory.boolValue
+            && FileManager.default.isExecutableFile(atPath: path)
     }
 
     private func status(
@@ -640,14 +647,17 @@ public struct ReviewAIHarnessDiscovery: Sendable {
         settings: ReviewAISettings,
         environment: [String: String]
     ) async -> ReviewAIHarnessStatus {
-        guard let command = settings.customBinaryPath(for: harness) ?? harness.commandName,
+        let customPath = settings.customBinaryPath(for: harness)
+        guard let command = customPath ?? harness.commandName,
               let executablePath = Self.resolveExecutable(command, path: environment["PATH"]) else {
             return ReviewAIHarnessStatus(
                 harness: harness,
                 availability: .missing,
                 executablePath: nil,
                 version: nil,
-                message: "\(harness.displayName) was not found."
+                message: customPath == nil
+                    ? "\(harness.displayName) was not found on the shell PATH."
+                    : "The saved path does not resolve to an executable file."
             )
         }
 

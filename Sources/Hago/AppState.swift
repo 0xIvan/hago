@@ -810,6 +810,20 @@ final class AppState: ObservableObject {
         saveReviewAISettings()
     }
 
+    func reconnectCodex() {
+        let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex")
+        let candidates = [
+            "Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+            "Contents/Resources/codex"
+        ]
+        let bundledExecutable = app.flatMap { app in
+            candidates.lazy.compactMap {
+                ReviewAIHarnessDiscovery.resolveExecutable(app.appending(path: $0).path, path: nil)
+            }.first
+        }
+        setReviewAICustomBinaryPath(bundledExecutable ?? "", for: .codex)
+    }
+
     func setReviewAICustomBinaryPath(_ path: String, for harness: ReviewAIHarnessKind) {
         let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
         let previousPath = reviewAISettings.customBinaryPath(for: harness)
@@ -819,6 +833,7 @@ final class AppState: ObservableObject {
             reviewAISettings.customBinaryPaths[harness.rawValue] = trimmedPath
         }
         if previousPath != reviewAISettings.customBinaryPath(for: harness) {
+            reviewAIHarnessStatuses.removeAll { $0.harness == harness }
             reviewAISettings.confirmedHarnesses.remove(harness)
         }
         saveReviewAISettings()
@@ -830,12 +845,17 @@ final class AppState: ObservableObject {
             return
         }
         isDiscoveringReviewAIHarnesses = true
-        let settings = reviewAISettings
 
         Task { @MainActor in
-            reviewAIHarnessStatuses = await reviewAIHarnessDiscovery.discover(settings: settings)
-            isDiscoveringReviewAIHarnesses = false
-            checkScheduledReview()
+            while true {
+                let settings = reviewAISettings
+                let statuses = await reviewAIHarnessDiscovery.discover(settings: settings)
+                guard settings.customBinaryPaths == reviewAISettings.customBinaryPaths else { continue }
+                reviewAIHarnessStatuses = statuses
+                isDiscoveringReviewAIHarnesses = false
+                checkScheduledReview()
+                return
+            }
         }
     }
 
