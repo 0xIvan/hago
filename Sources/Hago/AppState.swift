@@ -308,6 +308,7 @@ final class AppState: ObservableObject {
         }
         visibleAppWindows.insert(id)
         prepareToOpenAppWindow()
+        refreshCaptureStatus()
         do {
             try refreshRecordedActivity(includingReview: true)
         } catch {
@@ -449,8 +450,8 @@ final class AppState: ObservableObject {
         guard let store else { return }
         let now = Date()
         let timeline = try store.dayTimeline(for: now)
-        todayTimeline = timeline
-        todaySummary = store.daySummary(from: timeline, on: now)
+        publish(\.todayTimeline, timeline)
+        publish(\.todaySummary, store.daySummary(from: timeline, on: now))
     }
 
     /// A new recording changes today's numbers, the open Activity day and, when Review time is
@@ -1142,7 +1143,19 @@ final class AppState: ObservableObject {
     }
 
     func refreshLoginItemStatus() {
-        loginItemStatus = SMAppService.mainApp.status
+        publish(\.loginItemStatus, SMAppService.mainApp.status)
+    }
+
+    /// Settings-only status; checking Chrome's Automation permission is an Apple Event round trip.
+    private func refreshCaptureStatus() {
+        publish(\.captureCapabilityLabel, reader.captureCapabilityLabel())
+        publish(\.chromeAutomationGranted, reader.chromeAutomationIsGranted())
+        refreshLoginItemStatus()
+    }
+
+    /// Every published write re-renders each view that observes AppState, even when the value is unchanged.
+    private func publish<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<AppState, Value>, _ value: Value) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
     }
 
     func setOpenAtLogin(_ enabled: Bool) {
@@ -1325,7 +1338,7 @@ final class AppState: ObservableObject {
 
     private func tick() {
         refreshAccessibilityTrust()
-        refreshLoginItemStatus()
+        if !visibleAppWindows.isEmpty { refreshCaptureStatus() }
         let now = Date()
         backUpOncePerDay(now: now)
         if isTrackingPaused || !suspensionReasons.isEmpty {
@@ -1334,20 +1347,18 @@ final class AppState: ObservableObject {
             captureTask = nil
             enqueue(recorder.observe(nil, at: now, uptime: ProcessInfo.processInfo.systemUptime))
             persistCheckpoints()
-            currentSnapshot = nil
-            currentClassification = nil
-            currentStateLabel = isTrackingPaused ? "Paused" : "Suspended"
+            publish(\.currentSnapshot, nil)
+            publish(\.currentClassification, nil)
+            publish(\.currentStateLabel, isTrackingPaused ? "Paused" : "Suspended")
             return
         }
         if let lastInput = awaySince(now: now) {
             if !isAway { stepAway(at: lastInput) }
-            currentStateLabel = "Away"
+            publish(\.currentStateLabel, "Away")
             return
         }
-        isAway = false
+        publish(\.isAway, false)
         checkScheduledReview()
-        captureCapabilityLabel = reader.captureCapabilityLabel()
-        chromeAutomationGranted = reader.chromeAutomationIsGranted()
         guard captureTask == nil else { return }
         let revision = captureRevision
         captureTask = Task { [weak self] in
@@ -1374,12 +1385,14 @@ final class AppState: ObservableObject {
         }
         let contextChanged = recorder.current?.snapshot.normalizedSignature != retained?.normalizedSignature
         let touchesReview = currentClassification?.kind == .review || classification?.kind == .review
-        currentSnapshot = retained
-        currentClassification = classification
+        publish(\.currentSnapshot, retained)
+        publish(\.currentClassification, classification)
         if let retained {
-            lastActivity = ShownActivity(snapshot: retained, kind: classification?.kind, isLive: false)
+            if lastActivity?.snapshot != retained || lastActivity?.kind != classification?.kind {
+                lastActivity = ShownActivity(snapshot: retained, kind: classification?.kind, isLive: false)
+            }
         } else {
-            idleReason = inHago ? .inHago : classification?.kind == .ignored ? .notRecorded : .unavailable
+            publish(\.idleReason, inHago ? .inHago : classification?.kind == .ignored ? .notRecorded : .unavailable)
         }
         enqueue(recorder.observe(retained, at: Date(), uptime: ProcessInfo.processInfo.systemUptime))
         let saved = persistCheckpoints()
@@ -1390,9 +1403,9 @@ final class AppState: ObservableObject {
                 errorMessage = error.localizedDescription
             }
         }
-        currentStateLabel = saved
+        publish(\.currentStateLabel, saved
             ? (classification?.kind.displayName ?? "Window context unavailable")
-            : "Storage error"
+            : "Storage error")
     }
 
     private func enqueue(_ checkpoints: [ActivitySegment]) {
@@ -1414,7 +1427,7 @@ final class AppState: ObservableObject {
                 pendingCheckpoints.removeValue(forKey: segment.id)
             }
             try refreshRecordedActivity(includingReview: selectedSection == .review && currentClassification?.kind == .review)
-            trackingErrorMessage = nil
+            publish(\.trackingErrorMessage, nil)
             return true
         } catch {
             trackingErrorMessage = "Time could not be saved. Hago will retry: \(error.localizedDescription)"

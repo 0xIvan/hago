@@ -292,7 +292,6 @@ private struct NowCard: View {
                         Image(systemName: "circle.fill")
                             .font(.system(size: 6))
                             .foregroundStyle(kind?.tint ?? .secondary)
-                            .symbolEffect(.pulse, isActive: shown.isLive)
                         Text(shown.isLive ? "Now" : "Last")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
