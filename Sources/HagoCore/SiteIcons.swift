@@ -13,6 +13,8 @@ public actor SiteIcons {
 
     private static let retryMissingAfter: TimeInterval = 7 * 86_400
     private static let maximumBytes = 512 * 1_024
+    /// Icons are drawn at most about 40 points wide; sites often serve 512 or 1024 pixel ones.
+    private static let maximumPixels = 128
 
     private let directory: URL
     private let session: URLSession
@@ -40,7 +42,9 @@ public actor SiteIcons {
 
         let file = directory.appendingPathComponent("\(host).icon")
         let missing = directory.appendingPathComponent("\(host).none")
-        if let data = try? Data(contentsOf: file) {
+        if let stored = try? Data(contentsOf: file) {
+            let data = Self.downsized(stored)
+            if data != stored { try? data.write(to: file, options: .atomic) }
             memory[host] = data
             return data
         }
@@ -50,7 +54,7 @@ public actor SiteIcons {
             return nil
         }
 
-        let task = Task { await download(host) }
+        let task = Task { await download(host).map(Self.downsized) }
         inFlight[host] = task
         let data = await task.value
         inFlight[host] = nil
@@ -118,6 +122,28 @@ public actor SiteIcons {
         ).ignoresCase()
         guard let pattern, let match = tag.firstMatch(of: pattern) else { return nil }
         return (match.output.1 ?? match.output.2 ?? match.output.3).map { String($0).replacingOccurrences(of: "&amp;", with: "&") }
+    }
+
+    /// The largest frame as a PNG of at most `maximumPixels`, or the data unchanged when it is already small.
+    static func downsized(_ data: Data) -> Data {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return data }
+        let frames = (0..<CGImageSourceGetCount(source)).map { index in
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
+            let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
+            let height = properties?[kCGImagePropertyPixelHeight] as? Int ?? 0
+            return (index: index, pixels: max(width, height))
+        }
+        guard let largest = frames.max(by: { $0.pixels < $1.pixels }), largest.pixels > maximumPixels else { return data }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumPixels
+        ]
+        let output = NSMutableData()
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, largest.index, options as CFDictionary),
+              let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else { return data }
+        CGImageDestinationAddImage(destination, image, nil)
+        return CGImageDestinationFinalize(destination) ? output as Data : data
     }
 
     private static func isImage(_ data: Data) -> Bool {

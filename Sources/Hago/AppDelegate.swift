@@ -55,11 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateApplicationIcon() {
         let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let resourceName = isDark ? "AppIcon-dark" : "AppIcon"
-        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "png"),
-              let image = NSImage(contentsOf: url) else {
-            return
-        }
+        guard let image = HagoAppIcon.image(dark: isDark, pixels: 512) else { return }
         NSApp.applicationIconImage = image
     }
 }

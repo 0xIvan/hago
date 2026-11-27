@@ -84,12 +84,7 @@ struct MenuBarContentView: View {
     }
 
     private var menuIcon: NSImage {
-        let resourceName = colorScheme == .dark ? "AppIcon-dark" : "AppIcon"
-        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "png"),
-              let image = NSImage(contentsOf: url) else {
-            return NSApp.applicationIconImage
-        }
-        return image
+        HagoAppIcon.image(dark: colorScheme == .dark, pixels: 64) ?? NSApp.applicationIconImage
     }
 
     private var metrics: some View {
